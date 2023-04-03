@@ -1,0 +1,1 @@
+cmd_/home/haijie.gong/disk/imx6ull_qemu/mynet/driver/mynet.ko := arm-linux-gnueabihf-ld -EL -r  -T ./scripts/module-common.lds --build-id  -o /home/haijie.gong/disk/imx6ull_qemu/mynet/driver/mynet.ko /home/haijie.gong/disk/imx6ull_qemu/mynet/driver/mynet.o /home/haijie.gong/disk/imx6ull_qemu/mynet/driver/mynet.mod.o ;  true

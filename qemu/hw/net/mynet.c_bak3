@@ -1,0 +1,438 @@
+#include "hw/net/mynet.h"
+
+
+#include "qemu/osdep.h"
+#include "hw/sysbus.h"
+#include "migration/vmstate.h"
+#include "net/net.h"
+#include "hw/irq.h"
+#include "hw/qdev-properties.h"
+#include "qemu/log.h"
+#include "qemu/module.h"
+#include "qemu/main-loop.h"
+#include "exec/address-spaces.h"
+#include "qemu/typedefs.h"
+
+
+#include <pthread.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <linux/if.h>
+
+#define TYPE_MYNET "mynet"
+#define mynet(obj) OBJECT_CHECK(mynet_state, (obj), TYPE_MYNET)
+
+
+
+typedef struct ring_node {
+    //flag==1,belone to eth card.
+    //flag==0,belone to driver.
+    uint32_t flag;
+    struct ring *next;
+    void * buffer;
+    size_t len;
+} ring_node_t ;
+
+
+
+
+
+typedef struct {
+    SysBusDevice parent_obj;
+    MemoryRegion mmio;
+    qemu_irq irq;
+    
+    char tap_name[IFNAMSIZ];
+    int tap_fd;
+
+    uint8_t mac_addr[6];
+
+    //tx
+    ring_node_t * tx_node_host;
+    pthread_t thread_tx;
+    pthread_mutex_t mutex_tx;
+    pthread_cond_t cond_tx;
+    
+    uint32_t tx_ring_base;
+    uint32_t tx_ctl_status;
+    uint32_t tx_irq_flag;
+    uint32_t tx_irq_mask;
+ 
+    //rx
+    ring_node_t * rx_node_host;
+    pthread_t thread_rx;
+    pthread_mutex_t mutex_rx;
+    pthread_cond_t cond_rx;
+    
+    uint32_t rx_ring_base;
+    uint32_t rx_ctl_status;//start stop status
+    uint32_t rx_irq_flag;//2 irq     flag/clear flag
+    uint32_t rx_irq_mask;
+} mynet_state;
+
+//void mynet_init(hwaddr base, qemu_irq irq)
+static void mynet_writefn(void *opaque, hwaddr addr,uint64_t value, unsigned size);
+static uint64_t mynet_readfn(void *opaque, hwaddr addr, unsigned size);
+static void mynet_realize(DeviceState *dev, Error **errp);
+static void mynet_class_init(ObjectClass *klass, void *data);
+static void mynet_register_types(void);
+
+
+/*
+bit3 ring_node_t * is NULL ptr
+bit2 failed to write tap dev.
+bit1 send a package completely
+bit0 ring_node_t->flag=0.
+*/
+#define TX_IF_NEED_IRQ(X)  do {                               \
+  if(!(s->tx_irq_mask & 1<<X) && !(s->tx_irq_flag & 1<<X)) {  \
+                s->tx_irq_flag |= 1<<X;                       \
+                qemu_mutex_lock_iothread();                   \
+                qemu_set_irq(s->irq, 1);                      \
+                qemu_mutex_unlock_iothread();                 \
+  }                                                           \
+} while(0)
+
+#define TX_STOP_FLAG  do {                                    \
+  while(pthread_mutex_trylock(&s->mutex_tx));                 \
+  s->tx_ctl_status = 0;                                       \
+  pthread_mutex_unlock(&s->mutex_tx);                         \
+} while(0)
+
+#define RX_IF_NEED_IRQ(X)  do {                               \
+  if(!(s->rx_irq_mask & 1<<X) && !(s->rx_irq_flag & 1<<X)) {  \
+                s->rx_irq_flag |= 1<<X;                       \
+                qemu_mutex_lock_iothread();                   \
+                qemu_set_irq(s->irq, 1);                      \
+                qemu_mutex_unlock_iothread();                 \
+  }                                                           \
+} while(0)
+
+#define RX_STOP_FLAG  do {                                    \
+  while(pthread_mutex_trylock(&s->mutex_rx));                 \
+  s->rx_ctl_status = 0;                                       \
+  pthread_mutex_unlock(&s->mutex_rx);                         \
+} while(0)
+
+
+
+static void open_tap(mynet_state *s)
+{
+    struct ifreq ifr;
+    int fd, err;
+    fd = open("/dev/net/tun", O_RDWR)
+    if (fd < 0) {
+        printf("open /dev/net/tun failed,exit\n");
+        exit(-1);
+    }
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.name,"tap0",IFNAMSIZ);
+    ifr.ifr_flags = IFF_TAP|TUNSETNOCSUM;
+    if ((err = ioctl(fd, TUNSETIFF, (void *) &ifr)) < 0) {
+        printf("creat tap failed,exit\n");
+        exit(-1);
+    }
+    s->tap_fd = fd;
+    strncpy(s->tap_name,ifr.name,IFNAMSIZ);
+    /*char cmd[500];
+    snprintf(cmd,"ip addr add 192.168.0.1/24 dev %s",s->tap_name,500);
+    system(cmd);
+    snprintf(cmd,"ip link set dev %s up",s->tap_name,500);
+    system(cmd);*/
+}
+
+
+
+static void *pthread_fn_tx(void *ptr)
+{
+    mynet_state *s = ptr;
+    
+    for(;;){
+        pthread_mutex_lock(&s->mutex_tx);
+        while(!s->tx_ctl_status)
+            pthread_cond_wait(&s->cond_tx, &s->mutex_tx);
+        pthread_mutex_unlock(&s->mutex_tx);
+
+        if(!s->tx_node_host) {
+            //tx ring node base or format error
+            TX_STOP_FLAG;
+            TX_IF_NEED_IRQ(3);//bit3 ring_node_t * is NULL ptr
+            continue;
+        }
+        if(!s->tx_node_host->flag) {
+            //nothing to send in tx ring
+            TX_STOP_FLAG;
+		        TX_IF_NEED_IRQ(0);//bit0 ring_node_t->flag=0.
+            continue;
+        }
+        
+        //start tx
+        size_t allToSend = s->tx_node_host->len;
+        size_t count = 0;
+        while(count < allToSend) {
+            ssize_t ret = write(s->tap_fd, 
+                                (char *)(s->tx_node_host->buffer) + count ,
+                                allToSend - cout);
+           if(ret < 0) {
+              TX_STOP_FLAG;
+              TX_IF_NEED_IRQ(2);//bit2 failed to write tap dev.
+              continue;
+           }
+           count += ret;
+        }
+        ring_node_t * tmp = s->tx_node_host;
+        s->tx_node_host = s->tx_node_host->next;
+        tmp->flag = 0;//mark this node belong to driver now
+		    TX_IF_NEED_IRQ(1);//bit1 send a package completely
+    }
+    return NULL;
+}
+
+static void *pthread_fn_rx(void *ptr)
+{
+    mynet_state *s = ptr;
+    
+    for(;;){
+        pthread_mutex_lock(&s->mutex_rx);
+        while(!s->rx_ctl_status)
+            pthread_cond_wait(&s->cond_rx, &s->mutex_rx);
+        pthread_mutex_unlock(&s->mutex_rx);
+
+        if(!s->rx_node_host) {
+            //rx ring node base or format error
+            RX_STOP_FLAG;
+            RX_IF_NEED_IRQ(3);//bit3 ring_node_t * is NULL ptr
+            continue;
+        }
+        if(!s->rx_node_host->flag) {
+            //rx ring buffer full
+            RX_STOP_FLAG;
+		        RX_IF_NEED_IRQ(0);//bit0 ring_node_t->flag=0
+            continue;
+        }
+        
+        //start rx
+        size_t allToSend = s->tx_node_host->len;
+        size_t count = 0;
+        while(count < allToSend) {
+            ssize_t ret = write(s->tap_fd, 
+                                (char *)(s->tx_node_host->buffer) + count ,
+                                allToSend - cout);
+           if(ret < 0) {
+              TX_STOP_FLAG;
+              TX_IF_NEED_IRQ(2);//bit2 failed to write tap dev.
+              continue;
+           }
+           count += ret;
+        }
+        ring_node_t * tmp = s->tx_node_host;
+        s->tx_node_host = s->tx_node_host->next;
+        tmp->flag = 0;//mark this node belong to driver now
+		    TX_IF_NEED_IRQ(1);//bit1 send a package completely
+    }
+    return NULL;
+}
+
+
+
+
+static void mynet_writefn(void *opaque, hwaddr addr,
+                               uint64_t value, unsigned size)
+{
+    mynet_state *s = mynet(opaque);
+    switch (addr) {
+    case 0x00://tx ring phy base reg
+        if(s->tx_ctl_status)
+            return;
+        s->tx_ring_base = value;
+        MemoryRegionSection mem_section = memory_region_find(
+                                             get_system_memory(), value, 0);
+        s->tx_node_host = memory_region_get_ram_ptr(mem_section.mr) 
+                                     + mem_section.offset_within_region;
+        break;
+    case 0x04://ctl reg
+        if(value==1 && s->tx_ctl_status==0) {
+            while(pthread_mutex_trylock(&s->mutex_tx));
+            s->tx_ctl_status = 1;//start
+            pthread_mutex_unlock(&s->mutex_tx);
+            pthread_cond_signal(&s->cond_tx);
+        }
+        if(value==0 && s->tx_ctl_status==1) {
+            while(pthread_mutex_trylock(&s->mutex_tx));
+            s->tx_ctl_status = 0;//stop
+            pthread_mutex_unlock(&s->mutex_tx);
+        }
+        break;
+    case 0x08:
+        s->tx_irq_flag = value;
+        if(!value) {
+          //printf("CLEAR_SEND_IRQ\n");
+          qemu_set_irq(s->irq, 0);
+        }
+        break;
+    case 0x0c://irq mask reg
+		    s->tx_irq_mask = value;
+        break;
+
+    case 0x10://rx ring phy base reg
+        if(s->rx_ctl_status)
+            return;
+        s->rx_ring_base = value;
+        MemoryRegionSection mem_section = memory_region_find(
+                                             get_system_memory(), value, 0);
+        s->rx_node_host = memory_region_get_ram_ptr(mem_section.mr) 
+                                     + mem_section.offset_within_region;
+        break;
+    case 0x14://ctl reg
+        if(value==1 && s->rx_ctl_status==0) {
+            while(pthread_mutex_trylock(&s->mutex_rx));
+            s->rx_ctl_status = 1;//start
+            pthread_mutex_unlock(&s->mutex_rx);
+            pthread_cond_signal(&s->cond_rx);
+        }
+        if(value==0 && s->rx_ctl_status==1) {
+            while(pthread_mutex_trylock(&s->mutex_rx));
+            s->rx_ctl_status = 0;//stop
+            pthread_mutex_unlock(&s->mutex_rx);
+        }
+        break;
+    case 0x18:
+        s->rx_irq_flag = value;
+        if(!value) {
+          //printf("CLEAR_SEND_IRQ\n");
+          qemu_set_irq(s->irq, 0);
+        }
+        break;
+    case 0x1c://irq mask reg
+		    s->rx_irq_mask = value;
+        break;
+
+    case 0x20:
+        if(s->tx_ctl_status || s->rx_ctl_status)
+          return;
+        s->mac_addr[0] = (char) (value & 0xff);
+    case 0x24:	
+        if(s->tx_ctl_status || s->rx_ctl_status)
+          return;
+        s->mac_addr[1] = (char) (value & 0xff);
+    case 0x28:	
+        if(s->tx_ctl_status || s->rx_ctl_status)
+          return;
+        s->mac_addr[2] = (char) (value & 0xff);
+    case 0x2c:	
+        if(s->tx_ctl_status || s->rx_ctl_status)
+          return;
+        s->mac_addr[3] = (char) (value & 0xff);
+    case 0x30:	
+        if(s->tx_ctl_status || s->rx_ctl_status)
+          return;
+        s->mac_addr[4] = (char) (value & 0xff);
+    case 0x34:	
+        if(s->tx_ctl_status || s->rx_ctl_status)
+          return;
+        s->mac_addr[5] = (char) (value & 0xff);
+    default:
+		    break;
+    }
+}
+
+static uint64_t mynet_readfn(void *opaque, hwaddr addr, unsigned size)
+{
+    return 0;
+}
+
+
+static const MemoryRegionOps mynet_mem_ops = {
+    .read = mynet_readfn,
+    .write = mynet_writefn,
+    .valid.min_access_size = 4,
+    .valid.max_access_size = 4,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static void mynet_realize(DeviceState *dev, Error **errp)
+{
+    
+    printf("mynet_instance_init\n");
+    return 0;
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+    mynet_state *s = mynet(dev);
+    //init reg ops policy
+    memory_region_init_io(&s->mmio, OBJECT(s), &mynet_mem_ops, s,"mynet-mmio", 56);
+    sysbus_init_mmio(sbd, &s->mmio);
+    //init irq policy
+    sysbus_init_irq(sbd, &s->irq);
+    
+
+
+    //init reg
+    s->tx_ring_base=0;
+    s->tx_ctl_status=0;
+    s->tx_irq_flag=0;
+    s->tx_irq_mask=0;
+    s->rx_ring_base=0;
+    s->rx_ctl_status=0;
+    s->rx_irq_flag=0;
+    s->rx_irq_mask=0;
+
+    s->mac_addr[0]=43;
+    s->mac_addr[1]=43;
+    s->mac_addr[2]=43;
+    s->mac_addr[3]=43;
+    s->mac_addr[4]=43;
+    s->mac_addr[5]=43;
+
+    //init others
+    open_tap(s);
+      
+    
+    s->tx_node_host=NULL;
+    pthread_mutex_init(&s->mutex_tx, NULL);
+    pthread_cond_init(&s->cond_tx, NULL);
+    pthread_create(&s->thread_tx, NULL,pthread_fn_tx, s);
+    
+    s->rx_node_host=NULL;
+    pthread_mutex_init(&s->mutex_rx, NULL);
+    pthread_cond_init(&s->cond_rx, NULL);
+    pthread_create(&s->thread_rx, NULL,pthread_fn_rx, s);
+}
+
+static void mynet_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    //printf("mynet_class_init\n");
+    dc->realize = mynet_realize;
+}
+
+static const TypeInfo mynet_info = {
+    .name          = TYPE_MYNET,
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(mynet_state),
+    .class_init    = mynet_class_init,
+};
+
+
+static void mynet_register_types(void)
+{
+    type_register_static(&mynet_info);
+}
+type_init(mynet_register_types)
+
+
+//we can use  pic[16] ~ pic[40]
+void mynet_init(hwaddr base, qemu_irq *irq)
+{
+    DeviceState *dev;
+    SysBusDevice *s;
+
+    dev = qdev_create(NULL, TYPE_MYNET);//instance_init
+    qdev_init_nofail(dev);//realize
+
+    s = SYS_BUS_DEVICE(dev);
+    sysbus_mmio_map(s, 0, base);
+    sysbus_connect_irq(s, 0, irq);
+}
+
+
+
+
