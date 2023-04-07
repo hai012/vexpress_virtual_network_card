@@ -341,11 +341,11 @@ static int open_tap(void)
         exit(-1);
     }
 
-    const u32 offload = TUN_F_CSUM | TUN_F_TSO4 | TUN_F_TSO6 | TUN_F_TSO_ECN | TUN_F_UFO;
+    /*const u32 offload = TUN_F_CSUM | TUN_F_TSO4 | TUN_F_TSO6 | TUN_F_TSO_ECN | TUN_F_UFO;
     if (ioctl(netdev->tun_fd, TUNSETOFFLOAD, offload)) {
         printf("set tap offload failed,exit\n");
         exit(-1);
-    }
+    }*/
     return fd;
 }
 
