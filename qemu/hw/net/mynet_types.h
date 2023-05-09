@@ -16,18 +16,19 @@
 #define MAX_RX_MAC_FILTER_MASK 4
 #define MAX_CHANNEL_NUM 4
 
-#define IRQF_TX_SEND        1
-#define IRQF_TX_STOP        2
-#define IRQF_TX_ERR         4
-#define MAX_IRQF_TX_PER_CHANNEL 3
+#define IRQF_TX_SEND        (1<<0)
+#define IRQF_TX_EMPTY       (1<<1)
+#define IRQF_TX_ERR         (1<<2)
+#define ALL_IRQF_TX         (IRQF_TX_SEND|IRQF_TX_EMPTY|IRQF_TX_ERR)
 
-#define IRQF_RX_SEND      1
-#define IRQF_RX_FULL      2
-#define IRQF_RX_ERR       4
-#define MAX_IRQF_RX_PER_CHANNE 3
+#define IRQF_RX_RECV        (1<<0)
+#define IRQF_RX_FULL        (1<<1)
+#define IRQF_RX_ERR         (1<<2)
+#define ALL_IRQF_RX         (IRQF_RX_RECV|IRQF_RX_FULL|IRQF_RX_ERR)
 
-#define MAX_HW_IRQ_PER_CHANNEL  2
-
+#define CHANNEL_IRQ_TX 0
+#define CHANNEL_IRQ_RX 1
+#define MAX_IRQ_NUM_PER_CHANNEL 2
 
 
 struct MynetStateChannel;
@@ -72,30 +73,24 @@ struct RegChannel{
 } __attribute__((packed));
 
 
+#define MAX_SKB_FRAGS 17
+#define NODE_F_BELONG (1<<0)
+#define NODE_F_TRANSFER (1<<1)
 
-
-
-// ring data: little ending 
-// frags_addr/nextNode_addr/buffer is guest phy addr
-struct frag_t {
-    uint64_t buffer;
-    uint64_t len;
-}
 struct ring_node_t {
-    //flag==1,belone to eth card.
-    //flag==0,belone to driver.
-    int flag;
-    int frags_count;
-    uint64_t frags_addr;
-    uint64_t byte_count;
-    uint64_t next;
+    //flag bit0 = 1,belone to eth card,bit0==0,belone to driver.
+    //flag bit1 = 1,transfer imidiately, bit1 = 0, transfer together with the next.
+    uint32_t flag;
+    uint32_t base;
+    uint32_t len;
+    uint32_t next;
 };
 
 
-static inline void *guest_to_host(uint64_t vguest_phy_addr)
+static inline void *guest_to_host(hwaddr guest_phy_addr)
 {
-    MemoryRegionSection mem_section_tx = memory_region_find(get_system_memory((hwaddr)msc->tx_node_host), value, 0);
-    return memory_region_get_ram_ptr(mem_section_tx.mr) + mem_section_tx.offset_within_region;
+    MemoryRegionSection mem_section = memory_region_find(get_system_memory(), guest_phy_addr, 0);
+    return memory_region_get_ram_ptr(mem_section.mr) + mem_section.offset_within_region;
 }
 
 

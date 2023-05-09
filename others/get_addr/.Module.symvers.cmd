@@ -1,0 +1,1 @@
+cmd_/mnt/samba/petalinux/zcu102/work/get_addr/Module.symvers := sed 's/ko$$/o/' /mnt/samba/petalinux/zcu102/work/get_addr/modules.order | scripts/mod/modpost     -o /mnt/samba/petalinux/zcu102/work/get_addr/Module.symvers -e -i Module.symvers   -T -

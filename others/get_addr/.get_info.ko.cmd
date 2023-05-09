@@ -1,0 +1,1 @@
+cmd_/mnt/samba/petalinux/zcu102/work/get_addr/get_info.ko := ld -r  -EL  -maarch64elf  --build-id=sha1  -T scripts/module.lds -o /mnt/samba/petalinux/zcu102/work/get_addr/get_info.ko /mnt/samba/petalinux/zcu102/work/get_addr/get_info.o /mnt/samba/petalinux/zcu102/work/get_addr/get_info.mod.o;  true

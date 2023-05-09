@@ -1,0 +1,172 @@
+#include <linux/init.h>               //__init __exit
+#include <linux/module.h>             //module_init/exit
+#include <linux/kernel.h>             //printk
+
+
+
+
+#include <asm/io.h>                    //ioremap iounmap
+#include <linux/delay.h>               //ssleep
+#include <linux/kthread.h>             //kthread_run
+#include <linux/interrupt.h>           //request_threaded_irq free_irq
+#include <linux/platform_device.h>     //platform
+#include <linux/slab.h>//kzmalloc
+#include <linux/dma-mapping.h>
+//#include <linux/types.h> //dma_addr_t
+
+
+static volatile uint32_t * base=NULL;
+static unsigned int virtual_irq=0;
+static int test=3;
+//static struct task_struct *task;
+
+
+irqreturn_t irq_handler_fn(int irq, void *data)
+{
+	*(base+1)=0;//clear irq
+	++test;
+	return IRQ_WAKE_THREAD;
+}
+
+
+irqreturn_t irq_handler_thread_fn(int irq, void *data)
+{
+	pr_err("irq:%d\n",test);
+	return IRQ_HANDLED;
+}
+
+
+
+
+int kthread_fn(void *data)
+{
+   while(!kthread_should_stop()) {
+   pr_err("start:%d\n",test);
+   *base = 9;//irq
+   pr_err("end:=%d\n",test);
+   ssleep(10);
+   }
+   return 0;
+}
+
+
+static int mynet_probe(struct platform_device *pdev)
+{
+
+    int *tx_data;
+dma_addr_t dma_dst_addr;
+    int *rx_data;
+dma_addr_t dma_dst_addr2;
+/*
+   int ret;
+   struct resource *res;
+
+
+   res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+   if (!res) {
+       pr_err("%s: Can't get IRQ resource\n",__func__);
+       return -1;
+   }
+   virtual_irq = res->start;
+   ret = request_threaded_irq(virtual_irq, irq_handler_fn, irq_handler_thread_fn, 0,"mynet_irq", NULL);
+   if(ret) {
+       pr_err("request_threaded_irq failed\n");
+       return ret;
+   }
+
+*/
+   base = ioremap(0x54000000,16);
+   if(!base) {
+      pr_err("ioremap failed\n");
+      free_irq(virtual_irq,NULL);
+      return -1;
+   }
+
+
+   //task = kthread_run(kthread_fn,NULL,"mynet_kthread");
+    tx_data = kzalloc(4,GFP_KERNEL);
+    if(!tx_data) {
+        pr_err("kzalloc rx_data failed");
+        return -1;
+    }
+    *tx_data = 888;
+	
+    dma_dst_addr = dma_map_single(&pdev->dev, tx_data, 4, DMA_TO_DEVICE);
+    if(!dma_dst_addr) {
+        pr_err("dma_map_single dma_dst_addr failed");
+        return -1;
+    }
+    *base = (uint32_t)tx_data;
+    dma_unmap_single(&pdev->dev, dma_dst_addr,4, DMA_TO_DEVICE);
+    
+
+
+
+
+
+
+    rx_data = kzalloc(4,GFP_KERNEL);
+    if(!rx_data) {
+        pr_err("kzalloc rx_data failed");
+        return -1;
+    }
+	
+    dma_dst_addr2 = dma_map_single(&pdev->dev, rx_data, 4, DMA_FROM_DEVICE);
+    if(!dma_dst_addr) {
+        pr_err("dma_map_single dma_dst_addr failed");
+        return -1;
+    }
+    *(base+3) = (uint32_t)rx_data;
+
+    dma_unmap_single(&pdev->dev, dma_dst_addr2,4, DMA_FROM_DEVICE);
+    pr_err("DMA_FROM_DEVICE:%d\n", *rx_data);
+
+
+
+   return 0;
+}
+
+
+static int mynet_remove(struct platform_device *dev)
+{
+  //kthread_stop(task);
+  //free_irq(virtual_irq,NULL);
+
+  iounmap(base);
+  return 0;
+}
+
+
+static const struct of_device_id id_table[] = {
+	{.compatible = "ghj,mynet",},
+	{},
+};
+static struct platform_driver mynet_drv = {
+	.probe	=	mynet_probe,
+	.remove	=	mynet_remove,
+	.driver	=	{
+		.name	=	"mynet",
+		.of_match_table	= id_table,	
+	}
+};
+
+
+
+
+MODULE_LICENSE ("GPL");
+
+
+#if 0
+module_platform_driver(mynet_drv);
+#else
+static int __init mynet_drv_init(void)
+{
+   return platform_driver_register(&mynet_drv);
+}
+module_init(mynet_drv_init);
+static void __exit mynet_drv_exit(void) 
+{
+  platform_driver_unregister(&mynet_drv);
+}
+module_exit(mynet_drv_exit);
+#endif

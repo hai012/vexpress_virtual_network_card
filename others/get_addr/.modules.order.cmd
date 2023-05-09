@@ -1,0 +1,1 @@
+cmd_/mnt/samba/petalinux/zcu102/work/get_addr/modules.order := {   echo /mnt/samba/petalinux/zcu102/work/get_addr/get_info.ko; :; } | awk '!x[$$0]++' - > /mnt/samba/petalinux/zcu102/work/get_addr/modules.order

@@ -12,214 +12,259 @@
 #include <linux/platform_device.h>     //platform
 #include <linux/slab.h>//kzmalloc
 #include <linux/dma-mapping.h>
+#include <linux/dmapool.h>
 //#include <linux/types.h> //dma_addr_t
 
 #include "mynet.h"
 
 
-static int POLL_WEIGHT = 4;
-module_param(POLL_WEIGHT, int, 0);
- 
-static int WATCHDOG_TIMEO = 5;/* In jiffies */
-module_param(WATCHDOG_TIMEO, int, 0);
+static int param_poll_weight_tx = 4;
+module_param(param_poll_weight_rx, int, 0644);
+static int param_poll_weight = 4;
+module_param(param_poll_weight, int, 0644);
+
+static int param_real_tx_channel_count = 4;
+module_param(param_real_tx_channel_count, int, 0644);
+static int param_real_rx_channel_count = 4;
+module_param(param_real_rx_channel_count, int, 0644);
 
 
-irqreturn_t irq_handler_tx_package(int irq, void *data)
+//static int param_watchdog_timeo = 5;/* In jiffies */
+//module_param(param_watchdog_timeo, int, 0);
+
+static int param_tx_ring_node_count = 100;
+module_param(param_tx_ring_node_count, int, 0644);
+static int param_rx_ring_node_count = 100;
+module_param(param_rx_ring_node_count, int, 0644);
+
+
+
+//config data
+int real_tx_channel_count;
+int real_rx_channel_count;
+int poll_weight_tx;
+int poll_weight_rx;
+int tx_ring_node_count;
+int rx_ring_node_count;
+//common data
+struct RegCommon * reg_base_common;
+struct dma_pool * pool;
+struct ring_node_info *ring_node_info_table;
+struct net_device * netdev;
+//channel data
+struct channel_data channel_info[MAX_CHANNEL_NUM];
+
+
+
+int	mynet_stop(struct net_device *dev)
 {
-	*(base+1)=0;//clear irq
-	return IRQ_HANDLED;
+    ring_deinit();
+    unregister_irq(dev);
+    hw_deinit(dev);
 }
-
-int init_irq(struct net_device *dev)
-{
-
-
-
-    struct mynet_priv *mynet_priv = netdev_priv(dev);
-
-
-    for(int i=0; i<MAX_CHANNEL_NUM;++i){
-        for(int j=0; j<MAX_IRQ_NUM_PER_CHANNEL;++j){
-            int irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL+j);
-            if(irq<0) {
-                    dev_err(dev,"%s: Can't get irq, index=%d\n",__func__,i*MAX_IRQ_NUM_PER_CHANNEL+j);
-                    clean_module(dev);
-                    return -1;
-            }
-            mynet_priv->channels[i].irq[j] = irq;
-        }
-    }
-
-    irqreturn_t *(irq_handler[])(int, void *) = {
-        irq_handler_tx,
-        irq_handler_rx
-    }
-    int state[MAX_CHANNEL_NUM][MAX_IRQ_NUM_PER_CHANNEL] = {{0,},};
-    for(int i=0; i<MAX_CHANNEL_NUM; ++i) {
-        for(int j=0; j<MAX_IRQ_NUM_PER_CHANNEL; ++j){
-            if(request_irq(mynet_priv->channels[i].irq[j],//irq_num
-                           irq_handler[j],//func
-                           0,//irqflags
-                           "mynet_irq",//irqname
-                           NULL)) {//dev_id
-                goto err_out;
-            } else {
-                state[i][j] = 1;
-            }
-        }
-    }
-    return 0;
-err_out:
-    for(int i=0; i<MAX_CHANNEL_NUM; ++i) {
-        for(int j=0; j<MAX_IRQ_NUM_PER_CHANNEL; ++j){
-            if(state[i][i]) {
-                free_irq(mynet_priv->channels[i].irq[j],//irq_num
-                 NULL); //dev_id
-            }
-        }
-    }
-}
-
-
-int ring_count_modify(struct channel *channel,int tx_count,int rx_count)
-{
-    struct mynet_priv *mynet_priv = netdev_priv(dev);
-    int state[MAX_CHANNEL_NUM][MAX_IRQ_NUM_PER_CHANNEL] = {{0,},};
-
-
-
-    virtual_addr = dma_alloc_coherent(dev,
-                        sizeof(struct ring_node_t)*RING_NODE_COUNT*2,
-                        &dma_addr,
-                        GFP_KERNEL);
-
-
-    for(int i=0; i<MAX_CHANNEL_NUM; ++i) {
-        for(int i=0; i<RING_NODE_COUNT; ++i) {
-            struct ring_node_t *virtual_addr;
-            dma_addr_t dma_addr;
-            
-            if(!virtual_addr) {
-
-            } else {
-
-            }
-            struct ring_node_t *rx_ring_virtual_addr;
-            dma_addr_t rx_ring_dma_addr;
-            mynet_priv.dma_alloc_coherent()
-        }
-    }
-}
-
 int	mynet_open(struct net_device *dev)
 {
-    struct mynet_priv *mynet_priv = netdev_priv(dev);
+    hw_init();
 
-
-    tx_data = kzalloc(4,GFP_KERNEL);
-    if(!tx_data) {
-        pr_err("kzalloc rx_data failed");
-        return -1;
-    }
-    *tx_data = 888;
-
-    dma_dst_addr = dma_map_single(&pdev->dev, tx_data, 4, DMA_TO_DEVICE);
-    if(!dma_dst_addr) {
-        pr_err("dma_map_single dma_dst_addr failed");
-        return -1;
-    }
-    *base = (uint32_t)tx_data;
-    dma_unmap_single(&pdev->dev, dma_dst_addr,4, DMA_TO_DEVICE);
-
-    rx_data = kzalloc(4,GFP_KERNEL);
-    if(!rx_data) {
-        pr_err("kzalloc rx_data failed");
+    if(register_irq(dev)) {
         return -1;
     }
 
-    dma_dst_addr2 = dma_map_single(&pdev->dev, rx_data, 4, DMA_FROM_DEVICE);
-    if(!dma_dst_addr) {
-        pr_err("dma_map_single dma_dst_addr failed");
-        return -1;
+    //ring init
+    if(ring_init(dev)){
+        unregister_irq(dev);
+        return -1
     }
-     *(base+3) = (uint32_t)rx_data; 
-     dma_unmap_single(&pdev->dev, dma_dst_addr2,4, DMA_FROM_DEVICE);
-     pr_err("DMA_FROM_DEVICE:%d\n", *rx_data);  
+
+    hw_start_real_channel();
     return 0;
 }
 
+netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *dev)
+{
+    if(insert_skb_to_tx_ring(skb,dev)) {
+        return NETDEV_TX_BUSY;
+    }
+    return NETDEV_TX_OK;
+}
 static const struct net_device_ops mynet_netdev_ops = {
 	.ndo_open		= mynet_open,
-	.ndo_stop		= mynet_release,
-	.ndo_set_config		= mynet_config,
-	.ndo_start_xmit		= mynet_tx,
-	.ndo_do_ioctl		= mynet_ioctl,
-	.ndo_get_stats		= mynet_stats,
-	.ndo_change_mtu		= mynet_change_mtu,
-	.ndo_tx_timeout    = mynet_tx_timeout,
+	.ndo_stop		= mynet_stop,
+	//.ndo_set_config		= mynet_config,
+	.ndo_start_xmit		= mynet_xmit,
+	//.ndo_do_ioctl		= mynet_ioctl,
+	//.ndo_get_stats		= mynet_stats,
+	//.ndo_change_mtu		= mynet_change_mtu,
+	//.ndo_tx_timeout    = mynet_tx_timeout,
 };
-static int mynet_poll_tx(struct napi_struct *, int budget)
-{
 
-}
-static int mynet_poll_rx(struct napi_struct *, int budget)
+int inline is_node_belong_to_driver(struct ring_node_info *node)
 {
-
+    return !(READ_ONCE(node->virtual_addr->flag) & NODE_F_BELONG);
 }
+int inline is_node_transfer(struct ring_node_info *node)
+{
+    return READ_ONCE(node->virtual_addr->flag) & NODE_F_TRANSFER;
+}
+static int mynet_poll_tx(struct napi_struct *napi, int budget)
+{
+    struct channel_data * channel = continerof(napi, struct channel_data, napi_tx);
+    int count=0;
+    while(is_node_belong_to_driver(channel->tx_ring_full)&&
+          channel->tx_ring_full!=channel->tx_ring_empty)
+    {
+        if(is_node_transfer(channel->tx_ring_full)) {
+            dma_unmap_sg(channel->tx_ring_full->scl);
+            devm_kfree(netdev,channel->tx_ring_full->scl);
+            free_skb(channel->tx_ring_full->skb);
+            ++count;
+            if(count==budget)
+                break;
+        }
+        channel->tx_ring_full = channel->tx_ring_full->next;
+    }
+
+    //unmask IRQF_TX_SEND
+    uini32_t mask = READ_ONCE(channel->reg_base_channel->tx_irq_mask);
+    mask |= IRQF_TX_SEND;
+    WRITE_ONCE(channel->reg_base_channel->tx_irq_mask, mask);
+    return count;
+}
+static int mynet_poll_rx(struct napi_struct *napi, int budget)
+{
+    struct channel_data * channel = continerof(napi, struct channel_data, napi_rx);
+    int count=0;
+    while(is_node_belong_to_driver(channel->rx_ring_full)&&
+          channel->rx_ring_full!=channel->rx_ring_empty)
+    {
+        //if(is_node_transfer(channel->tx_ring_full)) {
+            dma_unmap_single(netdev,
+                            channel->tx_ring_full->virtual_addr->base,
+                            channel->tx_ring_full->virtual_addr->len,
+                            DMA_FROM_DEVICE);
+            struct skb_buff *skb_recv = channel->skb;
+
+            //replace
+            struct skb_buff *skb_replace = napi_alloc_skb(napi,  MAX_RX_SKB_BUFF_LEN);
+            if(unlikely(!skb_replace)) {
+                pr_err("napi_alloc_skb failed");
+                goto err_clean_previous;
+            }
+            skb_reserve(skb_replace, 2);
+            skb_record_rx_queue(skb_replace,skb_get_rx_queue(skb_recv));
+            dma_addr_t dma_addr = dma_map_single(netdev,
+                                                 skb_replace->data,
+                                                 MAX_RX_SKB_BUFF_LEN-2,
+                                                 DMA_TO_DEVICE);
+            if (unlikely(dma_mapping_error(netdev, dma_addr))) {
+                pr_err("dma_map_single skb_replace failed");
+                kfree_skb(skb_replace);
+                goto err_clean_previous;
+            }
+            channel->rx_ring_full->skb = skb_replace;
+            WRITE_ONCE(channel->rx_ring_full->virtual_addr->base,dma_addr);
+            WRITE_ONCE(channel->rx_ring_full->virtual_addr->len,MAX_RX_SKB_BUFF_LEN-2);
+            wmb();
+            channel->rx_ring_full = channel->rx_ring_full->next;
+            WRITE_ONCE(channel->rx_ring_full->virtual_addr->flag,NODE_F_TRANSFER|NODE_F_BELONG);
+            
+
+
+            //recv
+            napi_gro_receive(skb_recv);
+            ++count;
+            if(count==budget)
+                break;
+        //}
+    }
+
+    //unmask IRQF_TX_SEND
+    uini32_t mask = READ_ONCE(channel->reg_base_channel->tx_irq_mask);
+    mask |= IRQF_TX_SEND;
+    WRITE_ONCE(channel->reg_base_channel->tx_irq_mask, mask);
+    return count;
+}
+
 static int mynet_probe(struct platform_device *pdev)
 {
-    struct net_device * dev = alloc_netdev_mqs(sizeof(struct mynet_device), 
-                                                    "mynet%d",
-                                                    NET_NAME_UNKNOWN,
-                                                    ether_setup,
-                                                    MAX_CHANNEL_NUM, 
-                                                    MAX_CHANNEL_NUM);
-    if(!dev) {
-        pr_err("failed to create netdev\n");
-        return -1;
-    }
-    //netdev priv init
-    mynet_priv->netdev = dev;
-    struct mynet_priv *mynet_priv = netdev_priv(dev);
-
-    struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, i);
+    //parse dtb
+    struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
     if (!res) {
-        dev_err(dev,"%s: Can't get %d MEM resource, index=%d \n",__func__,i);
-        clean_module(dev);
+        pr_err("%s: fail to get RegCommon virtual base addr\n",__func__);
         return -1;
     }
-    mynet_priv->reg_virtual_addr = (struct RegCommon *)res->start;
-    for(int i=0; i<MAX_CHANNEL_NUM;++i){
+    reg_base_common = (struct RegCommon *)res->start;
+    for(int i=0; i<MAX_CHANNEL_NUM;++i) {
         res = platform_get_resource(pdev, IORESOURCE_MEM, i);
         if (!res) {
-            dev_err(dev,"%s: Can't get %d MEM resource, index=%d \n",__func__,i);
-            clean_module(dev);
+            pr_err("%s: fail to get RegChannel virtual base addr, channel=%d\n",__func__,i)
             return -1;
         }
-        mynet_priv->channels[i].reg_virtual_addr = (struct RegChannel *)res->start;
+        channel_info[i].reg_base_channel = (struct RegChannel *)res->start;
+
+        int irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL);
+        if(irq < 0) {
+            pr_err("%s: fail to get tx irq, channel=%d,irq=%d\n",__func__,i,j);
+            return -1;
+        }
+        channel_info[i].tx_irqs = irq;
+        int irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL+1);
+        if(irq < 0) {
+            pr_err("%s: fail to get rx irq, channel=%d,irq=%d\n",__func__,i,j);
+            return -1;
+        }
+        channel_info[i].rx_irqs = irq;
     }
 
-
-
-    //init netdev and napi
-	netif_napi_add(dev, &mynet_priv->napi_tx, mynet_poll_tx, POLL_WEIGHT_TX);
-    netif_napi_add(dev, &mynet_priv->napi_rx, mynet_poll_rx, POLL_WEIGHT_RX);
-    dev->netdev_ops = &mynet_netdev_ops;
-	dev->flags           |= IFF_NOARP;
-	dev->features        |= NETIF_F_HW_CSUM;
-	dev->watchdog_timeo = WATCHDOG_TIMEO;
-	
-    if(register_netdev(dev)) {
-        dev_err(dev,"%s: Can't get irq, index=%d\n",__func__,i*MAX_IRQ_NUM_PER_CHANNEL+j);
-        clean_module(dev);
+    //param check
+    real_tx_channel_count = param_real_tx_channel_count;
+    real_rx_channel_count = param_real_rx_channel_count;
+    poll_weight_tx = param_poll_weight_tx;
+    poll_weight_tx = param_poll_weight_rx;
+    tx_ring_node_count = param_tx_ring_node_count+1;
+    rx_ring_node_count = param_rx_ring_node_count+1;
+    if(real_tx_channel_count > MAX_CHANNEL_NUM || real_tx_channel_count <= 0) {
+        pr_err("%s: real_tx_channel_count is not valid\n",__func__);
         return -1;
     }
+    if(real_rx_channel_count > MAX_CHANNEL_NUM || real_rx_channel_count <= 0) {
+        pr_err("%s: real_rx_channel_count is not valid\n",__func__);
+        return -1;
+    }
+
+    //netdev init
+    netdev = alloc_netdev_mqs( 0,
+                               "mynet%d",
+                               NET_NAME_UNKNOWN,
+                               ether_setup,
+                               mynet_info.real_tx_channel_count, 
+                               mynet_info.real_rx_channel_count);
+    if(!netdev) {
+        pr_err("%s: failed to create netdev\n",__func__);
+        return -1;
+    }
+    for(int i=0; i<real_tx_channel_count; ++i) {
+	    netif_napi_add(dev, &channel_info[i].napi_tx, mynet_poll_tx, poll_weight_tx);
+    }
+    for(int i=0; i<real_rx_channel_count; ++i) {
+        netif_napi_add(dev, &channel_info[i].napi_rx, mynet_poll_rx, poll_weight_rx);
+    }
+    netdev->netdev_ops = &mynet_netdev_ops;
+	netdev->flags           |= IFF_NOARP;
+	netdev->features        |= NETIF_F_HW_CSUM;
+    if(register_netdev(netdev)) {
+        pr_err("%s: fail to register netdev\n",__func__);
+        free_netdev(netdev);
+        return -1;
+    }
+    return 0;
 }
 
 static int mynet_remove(struct platform_device *dev)
 {
-    clean_module(netdev);
-    iounmap(base);
+    unregister_irq(netdev);
+    unregister_netdev(netdev);
+    free_netdev(netdev);
     return 0;
 }
 

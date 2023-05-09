@@ -1,0 +1,1 @@
+cmd_/mnt/samba/petalinux/zcu102/work/dma/dma_copy_test.ko := ld -r  -EL  -maarch64elf  --build-id=sha1  -T scripts/module.lds -o /mnt/samba/petalinux/zcu102/work/dma/dma_copy_test.ko /mnt/samba/petalinux/zcu102/work/dma/dma_copy_test.o /mnt/samba/petalinux/zcu102/work/dma/dma_copy_test.mod.o;  true

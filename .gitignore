@@ -1,3 +1,4 @@
 out/
 rootfs/rootfs.ext4
+rootfs/ubuntu_rootfs.ext4
 .vscode

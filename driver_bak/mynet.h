@@ -91,6 +91,9 @@ struct RegChannel{
 } __attribute__((packed));
 
 
+
+
+
 struct ring_node_t {
     //flag bit0 = 1,belone to eth card,bit0==0,belone to driver.
     //flag bit1 = 1,transfer imidiately, bit1 = 0, transfer together with the next.
@@ -105,49 +108,46 @@ struct ring_node_info {
     struct ring_node_t *virtual_addr;
     dma_addr_t dma_addr;
     struct skbuff *skb;
-    struct scatterlist *scl;
     struct ring_node_info * next;
 }
 
 
-struct channel_data {
-    struct RegChannel *reg_base_channel;
-    int tx_irqs;
-    int rx_irqs;
-    struct napi_struct napi_tx;
-    struct napi_struct napi_rx;
-    struct ring_node_info *tx_ring_empty;
-    struct ring_node_info *tx_ring_full;
-    struct ring_node_info *rx_ring_empty;
-    struct ring_node_info *rx_ring_full;
+struct mynet_info_t {
+    //hw info
+    struct RegCommon * reg_base_common;
+    struct RegChannel *reg_base_channel[MAX_CHANNEL_NUM];
+    int tx_irqs[MAX_CHANNEL_NUM];
+    int rx_irqs[MAX_CHANNEL_NUM];
+
+    //config info
+    int real_tx_channel_count;
+    int real_rx_channel_count;
+    int poll_weight_tx;
+    int poll_weight_rx;
+    int tx_ring_node_count;
+    int rx_ring_node_count;
 }
 
-//config data
-extern int real_tx_channel_count;
-extern int real_rx_channel_count;
-extern int poll_weight_tx;
-extern int poll_weight_rx;
-extern int tx_ring_node_count;
-extern int rx_ring_node_count; 
-//common data
-extern struct RegCommon * reg_base_common;
-extern struct dma_pool * pool;
-extern struct ring_node_info *ring_node_info_table;
-extern struct net_device * netdev; 
-extern //channel data
-extern struct channel_data channel_info[MAX_CHANNEL_NUM];
-extern int real_tx_channel_count;
-extern int real_rx_channel_count;
-extern int poll_weight_tx;
-extern int poll_weight_rx;
-extern int tx_ring_node_count;
-extern int rx_ring_node_count; 
-//common data
-extern struct RegCommon * reg_base_common;
-extern struct dma_pool * pool;
-extern struct ring_node_info *ring_node_info_table;
-extern struct net_device * netdev; 
-extern //channel data
-extern struct channel_data channel_info[MAX_CHANNEL_NUM];
+struct irq_data {
+    struct napi_struct napi;
+    int channelIndex;
+    struct mynet_priv_t *priv;
+}
+
+struct mynet_priv_t {
+    struct net_device *netdev;
+    struct irq_data irq_data_tx[MAX_CHANNEL_NUM];
+    struct irq_data irq_data_rx[MAX_CHANNEL_NUM];
+
+    struct dma_pool * pool;
+    struct ring_node_info *ring_node_info_table;
+    struct skb_buff *skb_rx;
+
+    struct ring_node_info *tx_ring[MAX_CHANNEL_NUM];
+    struct ring_node_info *rx_ring[MAX_CHANNEL_NUM];
+    
+
+    struct mynet_info_t * info;
+}
 
 #endif

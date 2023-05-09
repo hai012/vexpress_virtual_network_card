@@ -128,10 +128,10 @@ void mynet_init(hwaddr base, qemu_irq *irq_table)
     printf("common_base:0x%lx size:0x%lx\n", install_base,sizeof(RegCommon));
     sysbus_mmio_map(sbd, 0, install_base);
     install_base += sizeof(RegCommon) - sizeof(RegCommon)%4  +  4;//common align
-    hwaddr channel_align_size = sizeof(*(ms->channels[0])) - sizeof(*(ms->channels[0]))%4 + 4;//channel align
+    hwaddr channel_align_size = sizeof(struct RegChannel) - sizeof(struct RegChannel)%4 + 4;//channel align
     for(int i=0;i<MAX_CHANNEL_NUM;++i)//MAX_CHANNEL_NUM channels
     {
-        printf("channel[%d]_base:0x%lx size=0x%lx\n",i, install_base, sizeof(*(ms->channels[0])));
+        printf("channel[%d]_base:0x%lx size=0x%lx\n",i, install_base, sizeof(struct RegChannel));
         sysbus_mmio_map(SYS_BUS_DEVICE(ms->channels[i]), 0, install_base);
         install_base += channel_align_size;
     }

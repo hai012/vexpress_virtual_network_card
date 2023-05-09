@@ -6,6 +6,7 @@
 QEMU=out/qemu/qemu-system-arm
 KERNEL=out/kernel/arch/arm/boot/zImage
 SD_IMAGE=rootfs/rootfs.ext4
+#SD_IMAGE=rootfs/ubuntu_rootfs.ext4
 
 MACHINE=vexpress-a9
 CORES=4

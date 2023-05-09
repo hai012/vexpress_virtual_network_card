@@ -20,7 +20,7 @@
 #include <stdlib.h>
 
 #include <pthread.h>
-
+#include <errno.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
@@ -36,9 +36,9 @@
 
 
 
-static int tap_write(int fd,void *buffer,size_t allToSend);
+static int tap_write(struct MynetStateChannel *msc);
 static void *pthread_fn_tx(void *ptr);
-static int tap_read(int fd,void *buffer,size_t *allToRecv);
+static int tap_read(struct MynetStateChannel *msc);
 static void *pthread_fn_rx(void *ptr);
 static void mynet_channel_writefn(void *opaque, hwaddr addr, uint64_t value, unsigned size);
 static uint64_t mynet_channel_readfn(void *opaque, hwaddr addr, unsigned size);
@@ -66,15 +66,15 @@ static void mynet_channel_register_types(void);
     msc->reg.tx_irq_flag |= (X);\
     if(msc->reg.tx_irq_mask & (X)) {\
             qemu_mutex_lock_iothread();\
-            qemu_set_irq(msc->irq[0], 1);\
+            qemu_set_irq(msc->irq[CHANNEL_IRQ_TX], 1);\
             qemu_mutex_unlock_iothread();\
     }\
 } while(0)
 #define RX_IF_NEED_IRQ(X)  do {\
-    msc->reg.rx_irq_flag |= (X);
+    msc->reg.rx_irq_flag |= (X);\
     if(msc->reg.rx_irq_mask & (X)) {\
         qemu_mutex_lock_iothread();\
-        qemu_set_irq(msc->irq[1], 1);\
+        qemu_set_irq(msc->irq[CHANNEL_IRQ_RX], 1);\
         qemu_mutex_unlock_iothread();\
     }\
 } while(0)
@@ -102,97 +102,130 @@ static const MemoryRegionOps mynet_channel_mem_ops = {
 
 static int tap_write(MynetStateChannel *msc)
 {
-    uint64_t count = msc->tx_node_host->frags_count;
-    struct iovec * iov = malloc(count * sizeof(struct iovec);
-    struct frag_t *base = guest_to_host(msc->tx_node_host->frags_addr);
-    for(uint64_t i=0; i<count; ++i) {
-        iov[i].iov_base = guest_to_host(base[i].buffer);
-        iov[i].iov_len = (size_t)base[i].len;
+    struct ring_node_t * node = msc->tx_node_host;
+    int frag_index=0;
+    struct ring_node_t *node_table[MAX_SKB_FRAGS];
+    struct iovec  iov[MAX_SKB_FRAGS];
+    ssize_t all_len=0;
+
+    for(int frag_index=0; frag_index<MAX_SKB_FRAGS; ++frag_index) {
+        node_table[frag_index] = node;
+        iov[frag_index].iov_base = guest_to_host(node->base);
+        iov[frag_index].iov_len = (size_t)node->len;
+        all_len += node->len;
+        if(node->flag & NODE_F_TRANSFER) {
+            break;
+        }
+        node = guest_to_host(node->next);
+        if(!node || !(node->flag & NODE_F_BELONG)) {
+            printf("fail to get NODE_F_TRANSFER,and the next node is NULL or not belong to card\n");
+            return -1;
+        }
     }
-    ssize_t ret = writev(fd, iov, count);
-    if(ret < 0) {
+    if(frag_index >= MAX_SKB_FRAGS) {
+        printf("frag count is large than  MAX_SKB_FRAGS\n");
         return -1;
     }
+
+    ssize_t ret = writev(msc->tap_fd, iov, 1+frag_index);
+    if(ret <= 0 || ret != all_len) {
+        printf("write failed,reason=%s,ret=%ld,count=%ld\n",strerror(errno),ret,all_len);
+        return -1;
+    }
+    for(int i=frag_index;i>0;--i) {//the last frag to the first frag
+        node_table[i]->flag &= ~NODE_F_BELONG;//belong to driver now
+    }
+    barrier();//smp_wmb()
+    node_table[0]->flag &= ~NODE_F_BELONG;//belong to driver now
+    msc->tx_node_host = guest_to_host(node->next);
     return 0;
 }
 
 static void *pthread_fn_tx(void *ptr)
 {
     MynetStateChannel *msc = ptr;
-    for(;;){
+    for(;;) {
         pthread_mutex_lock(&msc->mutex_tx);
         while(!msc->reg.tx_ctl_status)
             pthread_cond_wait(&msc->cond_tx, &msc->mutex_tx);
         pthread_mutex_unlock(&msc->mutex_tx);
 
         //start tx
-        if(!msc->tx_node_host){
-            TX_IF_NEED_IRQ(IRQF_TX_ERR);
+        if(!msc->tx_node_host) {
             TX_FLAG_MODIFY(CTL_FLAG_STOP);
+            TX_IF_NEED_IRQ(IRQF_TX_ERR);
             //printf("failed to write tap dev,tap erro or data erro\n");
             continue;
         }
         
-        if(!msc->tx_node_host->flag) {
-            TX_IF_NEED_IRQ(IRQF_TX_EMPTY);
+        if(!(msc->tx_node_host->flag & NODE_F_BELONG)) {
             TX_FLAG_MODIFY(CTL_FLAG_STOP);
+            TX_IF_NEED_IRQ(IRQF_TX_EMPTY);
             //printf("failed to write tap dev,tap erro or data erro\n");
             continue;
         }
 
-        if(tap_write(msc)){
-            TX_IF_NEED_IRQ(IRQF_TX_ERR);
+        if(tap_write(msc)) {
             TX_FLAG_MODIFY(CTL_FLAG_STOP);
+            TX_IF_NEED_IRQ(IRQF_TX_ERR);
             printf("tap_write failed\n");
             continue;
         }
 
-        ring_node_t * tmp = msc->tx_node_host;
-        msc->tx_node_host = guest_to_host(msc->tx_node_host->next);
-        tmp->flag = 0;//mark this node belong to driver now
-
         if(!msc->tx_node_host){
-            TX_IF_NEED_IRQ(IRQF_TX_ERR);
             TX_FLAG_MODIFY(CTL_FLAG_STOP);
+            TX_IF_NEED_IRQ(IRQF_TX_ERR);
             //printf("failed to write tap dev,tap erro or data erro\n");
             continue;
         }
 
-        if(msc->tx_node_host->flag) {
+        if(msc->tx_node_host->flag & NODE_F_BELONG) {
 		    TX_IF_NEED_IRQ(IRQF_TX_SEND);
             continue;//send a package completely and continue to send
         }
-        TX_IF_NEED_IRQ(IRQF_TX_SEND|IRQF_TX_EMPTY);
         TX_FLAG_MODIFY(CTL_FLAG_STOP);//send a package completely and stop for nothing to send
-        //printf("tx empty\n");
+        TX_IF_NEED_IRQ(IRQF_TX_SEND|IRQF_TX_EMPTY);
     }
     return NULL;
 }
 
-static int tap_read(int fd,void *buffer,size_t *allToRecv)
+static int tap_read(struct MynetStateChannel* msc)
 {
+    struct ring_node_t * node = msc->rx_node_host;
+    int frag_index=0;
+    struct ring_node_t *node_table[MAX_SKB_FRAGS];
+    struct iovec  iov[MAX_SKB_FRAGS];
 
-    ssize_t ret = read(fd, buffer, *allToRecv);
-    if(ret < 0) {
+    for(int frag_index=0; frag_index<MAX_SKB_FRAGS; ++frag_index) {
+        node_table[frag_index] = node;
+        iov[frag_index].iov_base = guest_to_host(node->base);
+        iov[frag_index].iov_len = (size_t)node->len;
+        if(node->flag & NODE_F_TRANSFER) {
+            break;
+        }
+        node = guest_to_host(node->next);
+        if(!node || !(node->flag & NODE_F_BELONG)) {
+            printf("fail to get NODE_F_TRANSFER,and the next node is NULL or not belong to card\n");
+            return -1;
+        }
+    }
+    if(frag_index >= MAX_SKB_FRAGS) {
+        printf("frag count is large than  MAX_SKB_FRAGS\n");
         return -1;
     }
-    *allToRecv = ret;
-    printf("read:%ld\n", *allToRecv);
-    return 0;
 
-    uint64_t count = msc->rx_node_host->frags_count;
-    struct iovec * iov = malloc(count * sizeof(struct iovec);
-    struct frag_t *base = guest_to_host(msc->rx_node_host->frags_addr);
-    for(uint64_t i=0; i<count; ++i) {
-        iov[i].iov_base = guest_to_host(base[i].buffer);
-        iov[i].iov_len = (size_t)base[i].len;
-    }
-    ssize_t ret = readv(fd, iov, count);
-    if(ret < 0) {
+    ssize_t ret = readv(msc->tap_fd, iov, 1+frag_index);
+    if(ret <= 0) {
+        printf("fail to readv,reason=%s,ret=%ld\n",strerror(errno),ret);
         return -1;
     }
+    for(int i=frag_index;i>0;--i) {//the last frag to the first frag
+        node_table[i]->flag &= ~NODE_F_BELONG;//belong to driver now
+    }
+    barrier();//smp_wmb()
+    node_table[0]->flag &= ~NODE_F_BELONG;//belong to driver now
+    msc->rx_node_host = guest_to_host(node->next);
     return 0;
-
 }
 static void *pthread_fn_rx(void *ptr)
 {
@@ -207,13 +240,13 @@ static void *pthread_fn_rx(void *ptr)
             if(!msc->rx_node_host) {
                 printf("tx ring node base or format error\n");
                 RX_FLAG_MODIFY(CTL_FLAG_STOP);
-                RX_IF_NEED_IRQ(IRQ_RX_ERR);
+                RX_IF_NEED_IRQ(IRQF_RX_ERR);
                 break;
             }
-            if(msc->rx_node_host->flag) {
-                //flag==1, rx ring buffer full
+            if(!msc->rx_node_host->flag) {
+                //flag==0, belong to driver, rx ring buffer full
                 RX_FLAG_MODIFY(CTL_FLAG_STOP);
-                RX_IF_NEED_IRQ(IRQ_RX_FULL);
+                RX_IF_NEED_IRQ(IRQF_RX_FULL);
                 break;
             }
             
@@ -221,7 +254,7 @@ static void *pthread_fn_rx(void *ptr)
             if(tap_read(msc)) {
                 printf("tap_read failed\n");
                 RX_FLAG_MODIFY(CTL_FLAG_STOP);
-                RX_IF_NEED_IRQ(IRQ_RX_ERR);
+                RX_IF_NEED_IRQ(IRQF_RX_ERR);
             }
 
             ring_node_t * tmp = msc->tx_node_host;
@@ -236,10 +269,11 @@ static void *pthread_fn_rx(void *ptr)
             }
 
             if(msc->rx_node_host->flag) {
-                RX_IF_NEED_IRQ(IRQF_RX_SEND);
-                continue;//send a package completely and continue to recv
+                //flag == 1 belong to net card
+                RX_IF_NEED_IRQ(IRQF_RX_RECV);
+                continue;//send a package completely and has space to  recv continuely
             }
-            RX_IF_NEED_IRQ(IRQF_RX_SEND|IRQF_RX_FULL);
+            RX_IF_NEED_IRQ(IRQF_RX_RECV|IRQF_RX_FULL);
             RX_FLAG_MODIFY(CTL_FLAG_STOP);//send a package completely and stop for nothing to send
         }
     }
@@ -255,7 +289,7 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
     switch (addr) {
     case 0x00://tx ring phy base reg
         if(msc->reg.tx_ctl_status)
-            return
+            return;
         msc->tx_node_host = guest_to_host(value);
         msc->reg.tx_ring_base = value;
         break;
@@ -271,16 +305,17 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
         }
         break;
     case 0x08://irq flag reg
-        for(int i=0;i<MAX_IRQ_NUM_PER_CHANNEL_TX;++i) {
-            if( !(value&(1<<i)) && (msc->reg.tx_irq_flag&(1<<i)) ) {
-                //printf("CLEAR_SEND_IRQ\n");
-                qemu_set_irq(msc->irq[i], 0);
-                msc->reg.tx_irq_flag &= ~(1<<i);//reset bit
-            }
+        //printf("CLEAR_SEND_IRQ\n");
+        msc->reg.tx_irq_flag = (uint32_t) value & ALL_IRQF_TX;
+        if( msc->reg.tx_irq_flag & msc->reg.tx_irq_mask) {
+            qemu_set_irq(msc->irq[CHANNEL_IRQ_TX], 0);
         }
         break;
-    case 0x0c://irq mask reg, low level works
-		msc->reg.tx_irq_mask = (uint32_t)(value) & 0x0003;//MAX_IRQ_NUM_PER_CHANNEL_TX bits
+    case 0x0c://irq mask reg, 0 musk , 1 not musk
+		msc->reg.tx_irq_mask = (uint32_t)value & ALL_IRQF_TX;
+        if( msc->reg.tx_irq_flag & msc->reg.tx_irq_mask) {
+            qemu_set_irq(msc->irq[CHANNEL_IRQ_TX], 0);
+        }
         break;
 /////////////////////////////////////////////////////////////////////////////////////
     case 0x10://rx ring phy base reg
@@ -299,16 +334,16 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
         }
         break;
     case 0x18:
-        for(int i=0;i<MAX_IRQ_NUM_PER_CHANNEL_RX;++i) {
-            if( !(value&(1<<i)) && (msc->reg.rx_irq_flag&(1<<i)) ) {
-                //printf("CLEAR_SEND_IRQ\n");
-                qemu_set_irq(msc->irq[i+MAX_IRQ_NUM_PER_CHANNEL_TX], 0);
-                msc->reg.tx_irq_flag &= ~(1<<i);//reset bit
-            }
+        msc->reg.rx_irq_flag = (uint32_t) value & ALL_IRQF_RX;
+        if( msc->reg.rx_irq_flag & msc->reg.rx_irq_mask) {
+            qemu_set_irq(msc->irq[CHANNEL_IRQ_RX], 0);
         }
         break;
     case 0x1c://irq mask reg, low level works
-		    msc->reg.rx_irq_mask = (uint32_t)(value) & 0x003;//MAX_IRQ_NUM_PER_CHANNEL_RX bits
+		msc->reg.rx_irq_mask = (uint32_t)(value) & ALL_IRQF_RX;//MAX_IRQ_NUM_PER_CHANNEL_RX bits
+        if( msc->reg.rx_irq_flag & msc->reg.rx_irq_mask) {
+            qemu_set_irq(msc->irq[CHANNEL_IRQ_RX], 0);
+        }
         break;
     }
 }
@@ -335,7 +370,7 @@ static int open_tap(void)
     }
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name,"tap0",IFNAMSIZ);
-    ifr.ifr_flags = IFF_TAP|IFF_MULTI_QUEUE|IFF_NAPI_FRAGS;
+    ifr.ifr_flags = IFF_TAP|IFF_MULTI_QUEUE;
     if(ioctl(fd, TUNSETIFF, (void *) &ifr) < 0) {
         printf("creat tap failed,exit\n");
         exit(-1);
