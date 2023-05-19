@@ -82,7 +82,9 @@ int	mynet_open(struct net_device *dev)
 
 netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *dev)
 {
-    if(insert_skb_to_tx_ring(skb,dev)) {
+    u16 channelIndex = skb_get_queue_mapping(skb);
+    if(insert_skb_to_tx_ring(&channel_info[channelIndex],dev)) {
+        netif_tx_stop_queue(netdev_get_tx_queue(dev, channelIndex));
         return NETDEV_TX_BUSY;
     }
     return NETDEV_TX_OK;
@@ -110,13 +112,15 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
 {
     struct channel_data * channel = continerof(napi, struct channel_data, napi_tx);
     int count=0;
+
+
     while(is_node_belong_to_driver(channel->tx_ring_full)&&
           channel->tx_ring_full!=channel->tx_ring_empty)
     {
         if(is_node_transfer(channel->tx_ring_full)) {
             dma_unmap_sg(channel->tx_ring_full->scl);
             devm_kfree(netdev,channel->tx_ring_full->scl);
-            free_skb(channel->tx_ring_full->skb);
+            kfree_skb(channel->tx_ring_full->skb);
             ++count;
             if(count==budget)
                 break;
@@ -125,9 +129,9 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     }
 
     //unmask IRQF_TX_SEND
-    uini32_t mask = READ_ONCE(channel->reg_base_channel->tx_irq_mask);
+    uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
     mask |= IRQF_TX_SEND;
-    WRITE_ONCE(channel->reg_base_channel->tx_irq_mask, mask);
+    writel_relaxed(mask, &channel->reg_base_channel->tx_irq_mask);
     return count;
 }
 static int mynet_poll_rx(struct napi_struct *napi, int budget)
@@ -145,6 +149,14 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             struct skb_buff *skb_recv = channel->skb;
 
             //replace
+            napi_alloc_frag(MAX_RX_SKB_BUFF_LEN);
+            if(unlikely(!skb_replace)) {
+                pr_err("napi_alloc_skb failed");
+                goto err_clean_previous;
+            }
+
+
+
             struct skb_buff *skb_replace = napi_alloc_skb(napi,  MAX_RX_SKB_BUFF_LEN);
             if(unlikely(!skb_replace)) {
                 pr_err("napi_alloc_skb failed");
@@ -162,13 +174,12 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 goto err_clean_previous;
             }
             channel->rx_ring_full->skb = skb_replace;
-            WRITE_ONCE(channel->rx_ring_full->virtual_addr->base,dma_addr);
-            WRITE_ONCE(channel->rx_ring_full->virtual_addr->len,MAX_RX_SKB_BUFF_LEN-2);
-            wmb();
-            channel->rx_ring_full = channel->rx_ring_full->next;
-            WRITE_ONCE(channel->rx_ring_full->virtual_addr->flag,NODE_F_TRANSFER|NODE_F_BELONG);
-            
+            writel_relaxed(channel->rx_ring_full->virtual_addr->base,dma_addr);
+            writel_relaxed(channel->rx_ring_full->virtual_addr->len,MAX_RX_SKB_BUFF_LEN-2);
+            writel(channel->rx_ring_full->virtual_addr->flag,NODE_F_TRANSFER|NODE_F_BELONG);
 
+            channel->rx_ring_empty = channel->rx_ring_empty->next;
+            channel->rx_ring_full = channel->rx_ring_full->next;
 
             //recv
             napi_gro_receive(skb_recv);
@@ -179,9 +190,9 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     }
 
     //unmask IRQF_TX_SEND
-    uini32_t mask = READ_ONCE(channel->reg_base_channel->tx_irq_mask);
+    uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
     mask |= IRQF_TX_SEND;
-    WRITE_ONCE(channel->reg_base_channel->tx_irq_mask, mask);
+    writel_relaxed(mask,  &channel->reg_base_channel->tx_irq_mask);
     return count;
 }
 
@@ -214,6 +225,9 @@ static int mynet_probe(struct platform_device *pdev)
             return -1;
         }
         channel_info[i].rx_irqs = irq;
+
+        spin_lock_init(&channel_info[i].lock_tx);
+        spin_lock_init(&channel_info[i].lock_rx);
     }
 
     //param check
@@ -244,10 +258,10 @@ static int mynet_probe(struct platform_device *pdev)
         return -1;
     }
     for(int i=0; i<real_tx_channel_count; ++i) {
-	    netif_napi_add(dev, &channel_info[i].napi_tx, mynet_poll_tx, poll_weight_tx);
+	    netif_napi_add(netdev, &channel_info[i].napi_tx, mynet_poll_tx, poll_weight_tx);
     }
     for(int i=0; i<real_rx_channel_count; ++i) {
-        netif_napi_add(dev, &channel_info[i].napi_rx, mynet_poll_rx, poll_weight_rx);
+        netif_napi_add(netdev, &channel_info[i].napi_rx, mynet_poll_rx, poll_weight_rx);
     }
     netdev->netdev_ops = &mynet_netdev_ops;
 	netdev->flags           |= IFF_NOARP;

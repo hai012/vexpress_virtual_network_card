@@ -104,22 +104,23 @@ struct ring_node_t {
 struct ring_node_info {
     struct ring_node_t *virtual_addr;
     dma_addr_t dma_addr;
+    struct ring_node_info * next;
+
     struct skbuff *skb;
     struct scatterlist *scl;
-    struct ring_node_info * next;
 }
 
-
+//TX    channel <- Qdisc(do not need lock queue) <- cpu
+//RX    hash(skb) -> cpu
 struct channel_data {
     struct RegChannel *reg_base_channel;
     int tx_irqs;
     int rx_irqs;
-    struct napi_struct napi_tx;
+    struct napi_struct napi_tx;//preempt
     struct napi_struct napi_rx;
     struct ring_node_info *tx_ring_empty;
     struct ring_node_info *tx_ring_full;
-    struct ring_node_info *rx_ring_empty;
-    struct ring_node_info *rx_ring_full;
+    struct ring_node_info *rx_ring;
 }
 
 //config data
@@ -136,18 +137,6 @@ extern struct ring_node_info *ring_node_info_table;
 extern struct net_device * netdev; 
 extern //channel data
 extern struct channel_data channel_info[MAX_CHANNEL_NUM];
-extern int real_tx_channel_count;
-extern int real_rx_channel_count;
-extern int poll_weight_tx;
-extern int poll_weight_rx;
-extern int tx_ring_node_count;
-extern int rx_ring_node_count; 
-//common data
-extern struct RegCommon * reg_base_common;
-extern struct dma_pool * pool;
-extern struct ring_node_info *ring_node_info_table;
-extern struct net_device * netdev; 
-extern //channel data
-extern struct channel_data channel_info[MAX_CHANNEL_NUM];
+
 
 #endif

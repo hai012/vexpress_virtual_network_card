@@ -86,7 +86,7 @@ int alloc_and_map_skb_for_rx_ring(void)
         struct napi_struct *napi = channel_info[channelIndex].napi_rx;
         while(channel_info[channelIndex].rx_ring_empty->next != channel_info[channelIndex].rx_ring_full)
         {
-            struct skb_buff *skb = napi_alloc_skb(napi,  MAX_RX_SKB_BUFF_LEN);
+            //struct skb_buff *skb = netdev_alloc_frag(napi,  MAX_RX_SKB_BUFF_LEN);
             if(unlikely(!skb )) {
                 pr_err("napi_alloc_skb failed");
                 goto err_clean_previous;
@@ -133,7 +133,7 @@ int alloc_map_insert_skb_to_rx_ring(struct sk_buff *skb)
 
 }
 
-int insert_skb_to_tx_ring(struct sk_buff *skb)
+int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 {
 
     int err;
@@ -156,16 +156,17 @@ int insert_skb_to_tx_ring(struct sk_buff *skb)
     	goto dma_map_sg_failed;
     }
     num_dma_bufs = dma_map_sg(netdev, scl, num_sg, DMA_TO_DEVICE);
-    if (unlikely(!num_dma_bufs)) {
+    if (unlikely(num_dma_bufs<=0)) {
     	err = -ENOMEM;
     	goto dma_map_sg_failed;
     }
 
 
     //check if it has enough node to fill
+    spin_lock(&channel->lock_tx);
     int nodes_need = num_dma_bufs;
-    for(struct ring_node_info *node=channel_info[skb->queue_mapping].tx_ring_empty;
-        node->next != channel_info[channelIndex].tx_ring_full;
+    for(struct ring_node_info *node=channel->tx_ring_empty;
+        node->next != channel->tx_ring_full;
         node=node->next) {
             if(nodes_need--)
                 break;
@@ -176,29 +177,35 @@ int insert_skb_to_tx_ring(struct sk_buff *skb)
         return -1;
     }
 
-    //start fill
-    struct ring_node_info * fill = channel_info[skb->queue_mapping].tx_ring_empty;
+    //start fill content
+    struct ring_node_info * fill = channel->tx_ring_empty;
     struct ring_node_t *node_table[MAX_SKB_FRAGS];
     for_each_sg(scl, crt_scl, num_dma_bufs, i) {
         node_table[i] = fill;
-        WRITE_ONCE(fill->virtual_addr->base,sg_dma_address(crt_scl));
-        WRITE_ONCE(fill->virtual_addr->len, sg_dma_len(crt_scl));
+        writel_relaxed(sg_dma_address(crt_scl), &fill->virtual_addr->base);
+        writel_relaxed(sg_dma_len(crt_scl), &fill->virtual_addr->len);
         fill = fill -> next;
     }
-    channel_info[skb->queue_mapping].tx_ring_empty = fill;
-
-    node_table[num_dma_bufs-1]->skb = skb;
-    node_table[num_dma_bufs-1]->scl = slc;
-    WRITE_ONCE(node_table[num_dma_bufs-1]->virtual_addr->flag, NODE_F_TRANSFER|NODE_F_BELONG);
-
-    for (int i=num_dma_bufs-2; i>0; ++i) {
-        WRITE_ONCE(node_table[i]->virtual_addr->flag, NODE_F_BELONG);
+    if(num_dma_bufs==1) {
+        node_table[num_dma_bufs-1]->skb = skb;
+        node_table[num_dma_bufs-1]->scl = slc;
+        writel(node_table[num_dma_bufs-1]->virtual_addr->flag, NODE_F_TRANSFER|NODE_F_BELONG);
+    } else {
+        node_table[num_dma_bufs-1]->skb = skb;
+        node_table[num_dma_bufs-1]->scl = slc;
+        writel_relaxed(node_table[num_dma_bufs-1]->virtual_addr->flag, NODE_F_TRANSFER|NODE_F_BELONG);
+        for (int i=num_dma_bufs-2; i>0; ++i) {
+            writel_relaxed(node_table[i]->virtual_addr->flag, NODE_F_BELONG);
+        }
+        writel(node_table[0]->virtual_addr->flag, NODE_F_BELONG);
     }
-    wmb();
-    WRITE_ONCE(node_table[0]->virtual_addr->flag, NODE_F_BELONG);
+
+    channel->tx_ring_empty = fill;
+    spin_unlock(&channel->lock_tx);
     return 0;
 
 dma_unmap:
+    spin_unlock(&channel->lock_tx);
 	dma_unmap_sg(netdev, scl, num_sg, DMA_TO_DEVICE);
 dma_map_sg_failed:
 	devm_kfree(netdev,scl);

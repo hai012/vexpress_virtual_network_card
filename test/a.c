@@ -3,9 +3,14 @@
 char b='\377';
 
 
+void test(int a,int b) 
+{
+b;
+printf("%d\n",a);
+}
+
 int main()
 {
-printf("%d,%d\n",sizeof(b),sizeof('\377'));
-printf("%x\n",b);
+	test(2,3);
 	return 0;
 }

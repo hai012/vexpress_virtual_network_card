@@ -1,0 +1,1 @@
+cmd_/home/haijie.gong/disk/vexpress/driver/test/list.mod := printf '%s\n'   list.o | awk '!x[$$0]++ { print("/home/haijie.gong/disk/vexpress/driver/test/"$$0) }' > /home/haijie.gong/disk/vexpress/driver/test/list.mod

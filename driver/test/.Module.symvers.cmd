@@ -1,0 +1,1 @@
+cmd_/home/haijie.gong/disk/vexpress/driver/test/Module.symvers :=  sed 's/ko$$/o/'  /home/haijie.gong/disk/vexpress/driver/test/modules.order | scripts/mod/modpost      -o /home/haijie.gong/disk/vexpress/driver/test/Module.symvers -e -i Module.symvers -T - 
