@@ -35,3 +35,5 @@ void hw_start_real_channel(void)
         writel_relaxed(1,                                         &channel_info[i].reg_base_channel->rx_ctl_status);//start
     }
 }
+
+

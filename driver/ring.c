@@ -58,11 +58,10 @@ int ring_init(void)
         }
         (ptr+rx_ring_node_count-1)->next = ptr;
         (ptr+rx_ring_node_count-1)->virtual_addr->next = ptr->dma_addr;
-        channel_info[i].rx_ring_empty = ptr;
-        channel_info[i].rx_ring_full = ptr;
+        channel_info[i].rx_ring = ptr;
     }
 
-    if(unlikely(alloc_and_map_skb_for_rx_ring())) {
+    if(unlikely(rx_ring_dma_init())) {
         pr_err("%s:fail to alloc and map skb for rx_ring",__func__);
         goto err_out;
     }
@@ -77,62 +76,60 @@ err_out:
 
 
 
-int alloc_and_map_skb_for_rx_ring(void)
+int rx_ring_dma_init(void)
 {
-    int channelIndex,nodeIndex;
-    
-    for(channelIndex=0; channelIndex<real_rx_channel_count; ++channelIndex) {
+    int channelIndex;
+    struct napi_struct *napi;
+    struct ring_node_info *rx_ring_start;
+    struct ring_node_info * init_node;
+    struct ring_node_info * deinit_node;
 
-        struct napi_struct *napi = channel_info[channelIndex].napi_rx;
-        while(channel_info[channelIndex].rx_ring_empty->next != channel_info[channelIndex].rx_ring_full)
+    for(channelIndex=0; channelIndex<real_rx_channel_count; ++channelIndex) {
+        rx_ring_start=channel_info[channelIndex].rx_ring;
+        for(init_node=rx_ring_start; init_node->next != rx_ring_start; init_node=init_node->next)
         {
-            //struct skb_buff *skb = netdev_alloc_frag(napi,  MAX_RX_SKB_BUFF_LEN);
-            if(unlikely(!skb )) {
-                pr_err("napi_alloc_skb failed");
+            char *liner_buffer = netdev_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
+            if(unlikely(!liner_buffer)) {
+                pr_err("netdev_alloc_frag failed");
                 goto err_clean_previous;
             }
-            skb_reserve(skb, 2);
-            skb_record_rx_queue(skb,channelIndex);
+            //skb_reserve(skb, 2);
+            //skb_record_rx_queue(skb,channelIndex);
             dma_addr_t dma_addr = dma_map_single(netdev,
-                                                 skb->data,
-                                                 MAX_RX_SKB_BUFF_LEN-2,
+                                                 liner_buffer + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
+                                                 MAX_RECV_LEN,
                                                  DMA_TO_DEVICE);
             if (unlikely(dma_mapping_error(netdev, dma_addr))) {
                 pr_err("dma_map_single dma_dst_addr failed");
-                kfree_skb(skb);
+                skb_free_frag(liner_buffer);  //page_frag_free
                 goto err_clean_previous;
             }
-            channel_info[channelIndex].rx_ring_empty->skb = skb;
-            WRITE_ONCE(channel_info[channelIndex].rx_ring_empty->virtual_addr->base,dma_addr);
-            WRITE_ONCE(channel_info[channelIndex].rx_ring_empty->virtual_addr->len,MAX_RX_SKB_BUFF_LEN-2);
-            WRITE_ONCE(channel_info[channelIndex].rx_ring_empty->virtual_addr->flag,NODE_F_TRANSFER|NODE_F_BELONG);
-            channel_info[channelIndex].rx_ring_empty = channel_info[channelIndex].rx_ring_empty->next;
+            init_node->liner_buffer = liner_buffer;
+            writel_relaxed(dma_addr,                        &init_node->virtual_addr->base);
+            writel_relaxed(MAX_RECV_LEN,                    &init_node->virtual_addr->len);
+            writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &init_node->virtual_addr->flag);
         }
     }
     return 0;
 
 err_clean_previous:
-    for(channelIndex=0; channelIndex< real_rx_channel_count; ++channelIndex) {
-        while(channel_info[channelIndex].rx_ring_full != channel_info[channelIndex].rx_ring_empty)
+    for(; channelIndex >= 0; --channelIndex) {
+        for(struct ring_node_info * deinit_node=channel_info[channelIndex].rx_ring;
+            deinit_node != init_node;
+            deinit_node = deinit_node->next)
         {
             dma_unmap_single(netdev,
-                             channel_info[channelIndex].rx_ring_full->virtual_addr->base,
+                             deinit_node->virtual_addr->base,
                              MAX_RX_SKB_BUFF_LEN-2,
                              DMA_FROM_DEVICE);
-            kfree_skb(channel_info[channelIndex].rx_ring_full->skb);
-            channel_info[channelIndex].rx_ring_full = channel_info[channelIndex].rx_ring_full->next;
+            skb_free_frag(deinit_node->liner_buffer);
         }
     }
     return -1;
 }
 
-int alloc_map_insert_skb_to_rx_ring(struct sk_buff *skb)
-{
-
-
-
-}
-
+//Q----CPU0
+//  \--CPU1    ? 
 int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 {
 
@@ -142,7 +139,6 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 * We don't advertise NETIF_F_FRAGLIST, so skb_to_sgvec() will not have
 * to go beyond nr_frags+1.
 * Note: We don't support chained scatterlists*/
-
     struct scatterlist *scl, *crt_scl;
     int num_dma_bufs;
     int num_sg;
@@ -155,6 +151,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     	err = -ENOMEM;
     	goto dma_map_sg_failed;
     }
+    //num_dma_bufs <= num_sg
     num_dma_bufs = dma_map_sg(netdev, scl, num_sg, DMA_TO_DEVICE);
     if (unlikely(num_dma_bufs<=0)) {
     	err = -ENOMEM;
@@ -163,7 +160,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 
 
     //check if it has enough node to fill
-    spin_lock(&channel->lock_tx);
+    spin_lock(&channel->spinlock_tx_ring_empty);
     int nodes_need = num_dma_bufs;
     for(struct ring_node_info *node=channel->tx_ring_empty;
         node->next != channel->tx_ring_full;
@@ -187,12 +184,14 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
         fill = fill -> next;
     }
     if(num_dma_bufs==1) {
-        node_table[num_dma_bufs-1]->skb = skb;
-        node_table[num_dma_bufs-1]->scl = slc;
-        writel(node_table[num_dma_bufs-1]->virtual_addr->flag, NODE_F_TRANSFER|NODE_F_BELONG);
+        node_table[0]->skb = skb;
+        node_table[0]->scl = slc;
+        node_table[0]->num_sg = num_sg;
+        writel(node_table[0]->virtual_addr->flag, NODE_F_TRANSFER|NODE_F_BELONG);
     } else {
         node_table[num_dma_bufs-1]->skb = skb;
         node_table[num_dma_bufs-1]->scl = slc;
+        node_table[num_dma_bufs-1]->num_sg = num_sg;
         writel_relaxed(node_table[num_dma_bufs-1]->virtual_addr->flag, NODE_F_TRANSFER|NODE_F_BELONG);
         for (int i=num_dma_bufs-2; i>0; ++i) {
             writel_relaxed(node_table[i]->virtual_addr->flag, NODE_F_BELONG);
@@ -201,11 +200,11 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     }
 
     channel->tx_ring_empty = fill;
-    spin_unlock(&channel->lock_tx);
+    spin_unlock(&channel->spinlock_tx_ring_empty);
     return 0;
 
 dma_unmap:
-    spin_unlock(&channel->lock_tx);
+    spin_unlock(&channel->spinlock_tx_ring_empty);
 	dma_unmap_sg(netdev, scl, num_sg, DMA_TO_DEVICE);
 dma_map_sg_failed:
 	devm_kfree(netdev,scl);

@@ -31,14 +31,17 @@ TSO/UFO/GRO is related to NETIF_F_FRAGLIST and NETIF_F_SG
 
 
 
-//align 2bytes
-//dsc mac 6bytes
-//src mac 6bytes
-//type/len 2bytes
-//64~1500 bytes
-//Frame Check Sequence 4bytes
-// 2+6+6+1500+4 = 1518
-#define MAX_RX_SKB_BUFF_LEN 1518
+//NET_SKB_PAD
+//NET_IP_ALIGN  0 or 2
+//ETH_HLEN 14,dest mac /src mac type
+//ETH_DATA_LEN, 1500
+//ETH_FCS_LEN, 4
+#define MAX_RX_SKB_LINEAR_BUFF_LEN \
+(SKB_DATA_ALIGN((NET_SKB_PAD  +  NET_IP_ALIGN + ETH_HLEN + ETH_DATA_LEN + ETH_FCS_LEN))\
++ SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
+                               
+#define ETH_HEADER_OFFSET_IN_LINEAR_BUFF (NET_SKB_PAD  +  NET_IP_ALIGN)
+#define MAX_RECV_LEN (ETH_DATA_LEN + ETH_FCS_LEN)
 
 
 
@@ -106,21 +109,35 @@ struct ring_node_info {
     dma_addr_t dma_addr;
     struct ring_node_info * next;
 
+    //tx
     struct skbuff *skb;
     struct scatterlist *scl;
+    int num_sg;
+    //rx
+    char * linear_buffer;
 }
 
 //TX    channel <- Qdisc(do not need lock queue) <- cpu
 //RX    hash(skb) -> cpu
 struct channel_data {
     struct RegChannel *reg_base_channel;
+    unsigned short queue_index; 
     int tx_irqs;
     int rx_irqs;
+
     struct napi_struct napi_tx;//preempt
     struct napi_struct napi_rx;
+
     struct ring_node_info *tx_ring_empty;
     struct ring_node_info *tx_ring_full;
+    spinlock_t spinlock_tx_ring_empty;
+    spinlock_t spinlock_tx_ring_full;
+
     struct ring_node_info *rx_ring;
+
+
+    int is_rx_ring_full;
+    int is_tx_ring_empty;
 }
 
 //config data
@@ -135,8 +152,18 @@ extern struct RegCommon * reg_base_common;
 extern struct dma_pool * pool;
 extern struct ring_node_info *ring_node_info_table;
 extern struct net_device * netdev; 
-extern //channel data
+//channel data
 extern struct channel_data channel_info[MAX_CHANNEL_NUM];
 
+
+
+int inline is_node_belong_to_hw(struct ring_node_info *node)
+{
+    return (read_relaxed(&node->virtual_addr->flag) & NODE_F_BELONG);
+}
+int inline is_node_transfer(struct ring_node_info *node)
+{
+    return read_relaxed(&node->virtual_addr->flag) & NODE_F_TRANSFER;
+}
 
 #endif

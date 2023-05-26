@@ -87,6 +87,13 @@ netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *dev)
         netif_tx_stop_queue(netdev_get_tx_queue(dev, channelIndex));
         return NETDEV_TX_BUSY;
     }
+    uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
+    if(flag & IRQF_TX_EMPTY) {
+        flag &= ~IRQF_TX_EMPTY;//clear TX_EMPTY flag
+        writel_relaxed(flag, &channel->reg_base_channel->tx_irq_flag);
+        wmb();
+        writel_relaxed(1,&channel->reg_base_channel->tx_ctl_status);//restart tx
+    }
     return NETDEV_TX_OK;
 }
 static const struct net_device_ops mynet_netdev_ops = {
@@ -100,34 +107,46 @@ static const struct net_device_ops mynet_netdev_ops = {
 	//.ndo_tx_timeout    = mynet_tx_timeout,
 };
 
-int inline is_node_belong_to_driver(struct ring_node_info *node)
-{
-    return !(READ_ONCE(node->virtual_addr->flag) & NODE_F_BELONG);
-}
-int inline is_node_transfer(struct ring_node_info *node)
-{
-    return READ_ONCE(node->virtual_addr->flag) & NODE_F_TRANSFER;
-}
 static int mynet_poll_tx(struct napi_struct *napi, int budget)
 {
+    if(unlikely(budget<=0)){
+        goto  poll_tx_exit;
+    }
+
     struct channel_data * channel = continerof(napi, struct channel_data, napi_tx);
     int count=0;
+    int stop_reason_error=1;
 
-
-    while(is_node_belong_to_driver(channel->tx_ring_full)&&
-          channel->tx_ring_full!=channel->tx_ring_empty)
-    {
+    //spin_lock(&channel->spinlock_tx_ring_full);
+    while(budget > count) {
+        if(is_node_belong_to_hw(channel->tx_ring_full)) {
+            //now ,we don't have skb to release
+            //there is data in tx ting,wait hw send data
+            break;
+        }
+        if(channel->tx_ring_full==channel->tx_ring_empty) {
+            //now ,we don't have skb to release
+            //there is no data in tx ting
+            break;
+        }
         if(is_node_transfer(channel->tx_ring_full)) {
-            dma_unmap_sg(channel->tx_ring_full->scl);
+            //now , we find the last frag
+            dma_unmap_sg(netdev, channel->tx_ring_full->scl, channel->tx_ring_full->num_sg, DMA_FROM_DEVICE);
             devm_kfree(netdev,channel->tx_ring_full->scl);
             kfree_skb(channel->tx_ring_full->skb);
             ++count;
-            if(count==budget)
-                break;
+            stop_reason_error=0;
+        } else {
+            stop_reason_error=1;
         }
         channel->tx_ring_full = channel->tx_ring_full->next;
     }
+    spin_unlock(&channel->spinlock_tx_ring_full);
 
+    BUG_ON(stop_reason_error);//unknown error,tx ring data was damaged
+
+    netif_tx_wake_queue(netdev,netdev_get_tx_queue(channel->queue_index));
+poll_tx_exit:
     //unmask IRQF_TX_SEND
     uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
     mask |= IRQF_TX_SEND;
@@ -138,54 +157,50 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
 {
     struct channel_data * channel = continerof(napi, struct channel_data, napi_rx);
     int count=0;
-    while(is_node_belong_to_driver(channel->rx_ring_full)&&
-          channel->rx_ring_full!=channel->rx_ring_empty)
+    while(budget>count)
     {
         //if(is_node_transfer(channel->tx_ring_full)) {
-            dma_unmap_single(netdev,
-                            channel->tx_ring_full->virtual_addr->base,
-                            channel->tx_ring_full->virtual_addr->len,
-                            DMA_FROM_DEVICE);
-            struct skb_buff *skb_recv = channel->skb;
+            if(is_node_belong_to_hw(channel->rx_ring)) {
 
+            }
             //replace
-            napi_alloc_frag(MAX_RX_SKB_BUFF_LEN);
-            if(unlikely(!skb_replace)) {
-                pr_err("napi_alloc_skb failed");
-                goto err_clean_previous;
+            char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
+            if(unlikely(!linear_buffer_replace)) {
+                pr_err("napi_alloc_frag failed");
+                return count;
             }
-
-
-
-            struct skb_buff *skb_replace = napi_alloc_skb(napi,  MAX_RX_SKB_BUFF_LEN);
-            if(unlikely(!skb_replace)) {
-                pr_err("napi_alloc_skb failed");
-                goto err_clean_previous;
-            }
-            skb_reserve(skb_replace, 2);
-            skb_record_rx_queue(skb_replace,skb_get_rx_queue(skb_recv));
             dma_addr_t dma_addr = dma_map_single(netdev,
-                                                 skb_replace->data,
-                                                 MAX_RX_SKB_BUFF_LEN-2,
+                                                 linear_buffer_replace + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
+                                                 MAX_RECV_LEN,
                                                  DMA_TO_DEVICE);
             if (unlikely(dma_mapping_error(netdev, dma_addr))) {
-                pr_err("dma_map_single skb_replace failed");
-                kfree_skb(skb_replace);
-                goto err_clean_previous;
+                pr_err("dma_map_single  failed");
+                skb_free_frag(linear_buffer_replace);  //page_frag_free
+                return count;
             }
-            channel->rx_ring_full->skb = skb_replace;
-            writel_relaxed(channel->rx_ring_full->virtual_addr->base,dma_addr);
-            writel_relaxed(channel->rx_ring_full->virtual_addr->len,MAX_RX_SKB_BUFF_LEN-2);
-            writel(channel->rx_ring_full->virtual_addr->flag,NODE_F_TRANSFER|NODE_F_BELONG);
+            dma_unmap_single(netdev,
+                            channel->rx_ring->virtual_addr->base,
+                            channel->rx_ring->virtual_addr->len,
+                            DMA_FROM_DEVICE);
+            char * linear_buffer_recv = channel->rx_ring->linear_buffer;//
 
-            channel->rx_ring_empty = channel->rx_ring_empty->next;
-            channel->rx_ring_full = channel->rx_ring_full->next;
+            channel->rx_ring->liner_buffer = linear_buffer_replace;
+            writel_relaxed(dma_addr,                        &channel->rx_ring->virtual_addr->base);
+            writel_relaxed(MAX_RECV_LEN,                    &channel->rx_ring->virtual_addr->len);
+            writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &channel->rx_ring->virtual_addr->flag);
+            channel->rx_ring = channel->rx_ring->next;
 
             //recv
-            napi_gro_receive(skb_recv);
+            struct skbuff * skb = build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
+            if (unlikely(!skb)) {
+                skb_free_frag(linear_buffer_recv);
+                netdev->stats.rx_dropped++;
+                return count;
+            }
+            skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
+            skb_record_rx_queue(skb,channel->queue_index);
+            napi_gro_receive(skb);
             ++count;
-            if(count==budget)
-                break;
         //}
     }
 
@@ -226,8 +241,9 @@ static int mynet_probe(struct platform_device *pdev)
         }
         channel_info[i].rx_irqs = irq;
 
-        spin_lock_init(&channel_info[i].lock_tx);
-        spin_lock_init(&channel_info[i].lock_rx);
+        spin_lock_init(&channel_info[i].spinlock_tx_ring_empty);
+        spin_lock_init(&channel_info[i].spinlock_tx_ring_full);
+        channel_info[i].queue_index = i;
     }
 
     //param check

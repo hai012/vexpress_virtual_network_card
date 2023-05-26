@@ -15,12 +15,13 @@ irqreturn_t irq_handler_tx(int irq, void *data)
 
         flag &= ~IRQF_TX_SEND;//clear
     }
-    if(flag & IRQF_TX_EMPTY) {
 
+    /*if(flag & IRQF_TX_EMPTY) {
         flag &= ~IRQF_TX_EMPTY;//clear
-    }
-    if(flag & IRQF_TX_ERR) {
+    }*/
 
+    if(flag & IRQF_TX_ERR) {
+        //netif_tx_stop_queue(netdev_get_tx_queue(dev, channel->queue_index));
         flag &= ~IRQF_TX_ERR;//clear
     }
     writel(flag, &channel->reg_base_channel->tx_irq_flag);
