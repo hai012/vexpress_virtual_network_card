@@ -1,4 +1,5 @@
-
+#include <linux/irqreturn.h>
+#include "mynet.h"
 
 
 irqreturn_t irq_handler_tx(int irq, void *data)

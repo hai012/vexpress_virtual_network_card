@@ -1,6 +1,6 @@
 
-
-
+#include <linux/types.h> 
+#include "mynet.h"
 
 
 
@@ -10,7 +10,7 @@ int ring_init(void)
     size_t node_count = (1+real_tx_channel_count) * tx_ring_node_count +
                         (1+real_rx_channel_count) * rx_ring_node_count;
     ring_node_info_table = devm_kcalloc(netdev,node_count,sizeof(struct ring_node_info),GFP_KERNEL);
-    if(unlikely(!priv->ring_node_info_table)) {
+    if(unlikely(!ring_node_info_table)) {
         pr_err("%s:alloc  ring_node_info_table failed",__func__);
         return -1;
     }
@@ -23,7 +23,7 @@ int ring_init(void)
 
 
     struct ring_node_info *ptr;
-    for(int i=0; i<real_tx_channel_count ++i) {
+    for(int i=0; i<real_tx_channel_count; ++i) {
         ptr = ring_node_info_table + i*tx_ring_node_count;
         ptr->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &ptr->dma_addr);
         if(unlikely(!ptr->virtual_addr)) {

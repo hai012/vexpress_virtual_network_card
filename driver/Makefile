@@ -1,7 +1,8 @@
 
-obj-m := mynet.o
+obj-m := mynet_driver.o
+mynet_driver-objs := mynet.o ring.o irq.o
 
-KERNELDIR=/home/haijie.gong/disk/mynet/linux-6.1.15
+KERNELDIR=$(shell pwd)/../out/kernel
 all default: modules
 install: modules_install
 modules modules_install help clean:
