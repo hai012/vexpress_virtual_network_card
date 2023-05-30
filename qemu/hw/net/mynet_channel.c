@@ -53,7 +53,7 @@ static void mynet_channel_register_types(void);
 
 #define TX_FLAG_MODIFY(CTL_FLAG)  do {                         \
   while(pthread_mutex_trylock(&msc->mutex_tx));               \
-  msc->reg.tx_ctl_status = CTL_FLAG;                              \
+  msc->reg.tx_ctl_status = CTL_FLAG;                            \
   pthread_mutex_unlock(&msc->mutex_tx);                       \
 } while(0)
 #define RX_FLAG_MODIFY(CTL_FLAG)  do {                        \
@@ -295,14 +295,12 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
         break;
     case 0x04://ctl reg
         if(value==1 && msc->reg.tx_ctl_status==0) {
-            if(msc->tx_node_host || msc->tx_node_host->flag) {
-                TX_FLAG_MODIFY(CTL_FLAG_START);
-                pthread_cond_signal(&msc->cond_tx);
-            }
+            TX_FLAG_MODIFY(CTL_FLAG_START);
+            pthread_cond_signal(&msc->cond_tx);
         }
-        if(value==0 && msc->reg.tx_ctl_status==1) {
+        /*if(value==0 && msc->reg.tx_ctl_status==1) {
             TX_FLAG_MODIFY(CTL_FLAG_STOP);
-        }
+        }*/
         break;
     case 0x08://irq flag reg
         //printf("CLEAR_SEND_IRQ\n");
@@ -326,12 +324,12 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
         break;
     case 0x14://ctl reg
         if(value==1 && msc->reg.rx_ctl_status==0) {
-            RX_FLAG_MODIFY(CTL_FLAG_STOP);
+            RX_FLAG_MODIFY(CTL_FLAG_START);
             pthread_cond_signal(&msc->cond_rx);
         }
-        if(value==0 && msc->reg.rx_ctl_status==1) {
+        /*if(value==0 && msc->reg.rx_ctl_status==1) {
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
-        }
+        }*/
         break;
     case 0x18:
         msc->reg.rx_irq_flag = (uint32_t) value & ALL_IRQF_RX;

@@ -1,11 +1,11 @@
 
-void hw_deinit(struct mynet_info_t *info)
+void inline hw_deinit(struct mynet_info_t *info)
 {
 
 }
 
 
-void hw_init(void)
+void inline hw_init(void)
     for(int i=0; i < MAX_CHANNEL_NUM; ++i) {
         writel_relaxed(0, &channel_info[i].reg_base_channel->tx_ctl_status);
         writel_relaxed(0, &channel_info[i].reg_base_channel->rx_ctl_status);
@@ -18,7 +18,7 @@ void hw_init(void)
         writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_mask  );
     }
 }
-void hw_start_real_channel(void)
+void inline hw_start_real_channel(void)
 {
     for(int i=0; i < info->real_tx_channel_count; ++i) {
         writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
