@@ -5,25 +5,27 @@ irqreturn_t irq_handler_tx(int irq, void *data)
 {
     struct channel_data * channel = (struct channel_data *)data;
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
-    if(flag & IRQF_TX_SEND) {
+    if(likely(flag & IRQF_TX_SEND)) {
         //mask IRQF_TX_SEND;
-        uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
-        mask &= ~IRQF_TX_SEND;
-        writel_relaxed(mask, &channel->reg_base_channel->tx_irq_mask);
+        //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
+        //mask &= ~IRQF_TX_SEND;
+        writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);
 
         napi_schedule(& channel->napi_tx);
 
         flag &= ~IRQF_TX_SEND;//clear
     }
 
-    /*if(flag & IRQF_TX_EMPTY) {
+    /*if(flag & IRQF_TX_EMPTY) { 
         flag &= ~IRQF_TX_EMPTY;//clear
-    }*/
-
+    }
     if(flag & IRQF_TX_ERR) {
         //netif_tx_stop_queue(netdev_get_tx_queue(dev, channel->queue_index));
-        flag &= ~IRQF_TX_ERR;//clear
-    }
+        BUG();
+        //flag &= ~IRQF_TX_ERR;//clear
+    }*/
+    BUG_ON(flag & IRQF_TX_ERR);
+
     writel(flag, &channel->reg_base_channel->tx_irq_flag);
     return IRQ_HANDLED;
 }
@@ -32,22 +34,23 @@ irqreturn_t irq_handler_rx(int irq, void *data)
     struct channel_data * channel = (struct channel_data *)data;
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->rx_irq_flag);
     if(flag & IRQF_RX_RECV) {
-        uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
-        mask &= ~IRQF_RX_RECV;
-        writel_relaxed(mask, &channel->reg_base_channel->tx_irq_mask);//mask IRQF_RX_RECV;
+        //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
+        //mask &= ~IRQF_RX_RECV;
+        writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);//mask IRQF_RX_RECV;
 
         napi_schedule(& channel->napi_rx);
 
         flag &= ~IRQF_RX_RECV;//clear irq flag
     }
-    if(flag & IRQF_RX_FULL) {
+    /*if(flag & IRQF_RX_FULL) {
 
         flag &= ~IRQF_RX_FULL;//clear irq flag
     }
     if(flag & IRQF_RX_ERR) {
 
         flag &= ~IRQF_RX_ERR;//clear irq flag
-    }
+    }*/
+    BUG_ON(flag & IRQF_RX_ERR);
     writel(flag, &channel->reg_base_channel->rx_irq_flag);
     return IRQ_HANDLED;
 }

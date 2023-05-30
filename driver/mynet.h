@@ -135,9 +135,6 @@ struct channel_data {
 
     struct ring_node_info *rx_ring;
 
-
-    int is_rx_ring_full;
-    int is_tx_ring_empty;
 }
 
 //config data

@@ -187,7 +187,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
         node_table[0]->skb = skb;
         node_table[0]->scl = slc;
         node_table[0]->num_sg = num_sg;
-        writel(node_table[0]->virtual_addr->flag, NODE_F_TRANSFER|NODE_F_BELONG);
+        writel(NODE_F_TRANSFER|NODE_F_BELONG, &node_table[0]->virtual_addr->flag);
     } else {
         node_table[num_dma_bufs-1]->skb = skb;
         node_table[num_dma_bufs-1]->scl = slc;
@@ -196,11 +196,12 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
         for (int i=num_dma_bufs-2; i>0; ++i) {
             writel_relaxed(node_table[i]->virtual_addr->flag, NODE_F_BELONG);
         }
-        writel(node_table[0]->virtual_addr->flag, NODE_F_BELONG);
+        writel(NODE_F_BELONG, &node_table[0]->virtual_addr->flag);
     }
 
     channel->tx_ring_empty = fill;
     spin_unlock(&channel->spinlock_tx_ring_empty);
+
     return 0;
 
 dma_unmap:

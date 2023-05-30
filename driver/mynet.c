@@ -64,19 +64,46 @@ int	mynet_stop(struct net_device *dev)
 }
 int	mynet_open(struct net_device *dev)
 {
-    hw_init();
+    //hw_init
+    for(int i=0; i < MAX_CHANNEL_NUM; ++i) {
+        writel_relaxed(0, &channel_info[i].reg_base_channel->tx_ctl_status);
+        writel_relaxed(0, &channel_info[i].reg_base_channel->rx_ctl_status);
+        wmb();
+        writel_relaxed(0, &channel_info[i].reg_base_channel->tx_ring_base );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->tx_irq_flag  );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->tx_irq_mask  );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->rx_ring_base );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_flag  );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_mask  );
+    }
 
     if(register_irq(dev)) {
         return -1;
     }
 
-    //ring init
+
     if(ring_init(dev)){
         unregister_irq(dev);
         return -1
     }
 
-    hw_start_real_channel();
+    //hw_start_real_channel
+    for(int i=0; i < info->real_tx_channel_count; ++i) {
+        writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
+        writel_relaxed(0,                                         &channel_info[i].reg_base_channel->tx_irq_flag);
+        writel_relaxed(IRQF_TX_SEND,                               &channel_info[i].reg_base_channel->tx_irq_mask);//unmask IRQF_TX_SEND
+        writel(1,                                                 &channel_info[i].reg_base_channel->tx_ctl_status);//start
+    }
+    for(int i=0; i < info->real_rx_channel_count; ++i) {
+        writel_relaxed(channel_info[i].rx_ring->dma_addr,    &channel_info[i].reg_base_channel->rx_ring_base);//set base
+        writel_relaxed(0,                                         &channel_info[i].reg_base_channel->rx_irq_flag);
+        writel_relaxed(IRQF_RX_RECV,                                &channel_info[i].reg_base_channel->rx_irq_mask);//unmask IRQF_RX_RECV
+        writel(1,                                                 &channel_info[i].reg_base_channel->rx_ctl_status);//start
+    }
+
+    netif_tx_start_all_queues(netdev);
+
+
     return 0;
 }
 
@@ -87,13 +114,18 @@ netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *dev)
         netif_tx_stop_queue(netdev_get_tx_queue(dev, channelIndex));
         return NETDEV_TX_BUSY;
     }
-    uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
+
+
+
+    //start tx anyway
+    writel_relaxed(1, &channel->reg_base_channel->tx_ctl_status);
+   /*uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
     if(flag & IRQF_TX_EMPTY) {
         flag &= ~IRQF_TX_EMPTY;//clear TX_EMPTY flag
         writel_relaxed(flag, &channel->reg_base_channel->tx_irq_flag);
         wmb();
         writel_relaxed(1,&channel->reg_base_channel->tx_ctl_status);//restart tx
-    }
+    }*/
     return NETDEV_TX_OK;
 }
 static const struct net_device_ops mynet_netdev_ops = {
@@ -109,13 +141,9 @@ static const struct net_device_ops mynet_netdev_ops = {
 
 static int mynet_poll_tx(struct napi_struct *napi, int budget)
 {
-    if(unlikely(budget<=0)){
-        goto  poll_tx_exit;
-    }
-
     struct channel_data * channel = continerof(napi, struct channel_data, napi_tx);
     int count=0;
-    int stop_reason_error=1;
+    int format_error = 1;
 
     //spin_lock(&channel->spinlock_tx_ring_full);
     while(budget > count) {
@@ -135,34 +163,38 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
             devm_kfree(netdev,channel->tx_ring_full->scl);
             kfree_skb(channel->tx_ring_full->skb);
             ++count;
-            stop_reason_error=0;
+            format_error=0;
         } else {
-            stop_reason_error=1;
+            format_error=1;
         }
         channel->tx_ring_full = channel->tx_ring_full->next;
     }
     spin_unlock(&channel->spinlock_tx_ring_full);
 
-    BUG_ON(stop_reason_error);//unknown error,tx ring data was damaged
+    BUG_ON(format_error);//unknown error,tx ring data was damaged
 
+    //wake up queue anyway
     netif_tx_wake_queue(netdev,netdev_get_tx_queue(channel->queue_index));
-poll_tx_exit:
+
     //unmask IRQF_TX_SEND
-    uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
-    mask |= IRQF_TX_SEND;
-    writel_relaxed(mask, &channel->reg_base_channel->tx_irq_mask);
+    //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
+    //mask |= IRQF_TX_SEND;
+    writel_relaxed(IRQF_TX_SEND, &channel->reg_base_channel->tx_irq_mask);
     return count;
 }
 static int mynet_poll_rx(struct napi_struct *napi, int budget)
 {
-    struct channel_data * channel = continerof(napi, struct channel_data, napi_rx);
+    struct channel_data * channel = continerof(napi, struct channel_data, napi_tx);
     int count=0;
+    int format_error=1;
     while(budget>count)
     {
         //if(is_node_transfer(channel->tx_ring_full)) {
             if(is_node_belong_to_hw(channel->rx_ring)) {
-
+                //now, there is no linear_buffer to receive
+                break;
             }
+
             //replace
             char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
             if(unlikely(!linear_buffer_replace)) {
@@ -201,13 +233,24 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             skb_record_rx_queue(skb,channel->queue_index);
             napi_gro_receive(skb);
             ++count;
+            format_error = 0;
         //}
     }
 
-    //unmask IRQF_TX_SEND
-    uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
-    mask |= IRQF_TX_SEND;
-    writel_relaxed(mask,  &channel->reg_base_channel->tx_irq_mask);
+
+    BUG_ON(format_error);
+
+
+
+    //unmask IRQF_TX_IRQF_RX_RECVSEND
+    //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
+    //mask |= IRQF_RX_RECV;
+    writel_relaxed(IRQF_RX_RECV,  &channel->reg_base_channel->tx_irq_mask);
+
+
+    //start rx anyway
+    writel_relaxed(1,  &channel->reg_base_channel->rx_ctl_status);
+
     return count;
 }
 
