@@ -13,15 +13,20 @@
 #include <linux/slab.h>//kzmalloc
 #include <linux/dma-mapping.h>
 #include <linux/dmapool.h>
-//#include <linux/types.h> //dma_addr_t
+#include <linux/scatterlist.h>
+#include <linux/skbuff.h>
+#include <linux/types.h>
+#include <linux/netdevice.h>
+#include <linux/spinlock_types.h>
+
 
 #include "mynet.h"
 
 
-static int param_poll_weight_tx = 4;
+static int param_poll_weight_tx = 64;
+module_param(param_poll_weight_tx, int, 0644);
+static int param_poll_weight_rx = 64;
 module_param(param_poll_weight_rx, int, 0644);
-static int param_poll_weight = 4;
-module_param(param_poll_weight, int, 0644);
 
 static int param_real_tx_channel_count = 4;
 module_param(param_real_tx_channel_count, int, 0644);
@@ -56,12 +61,7 @@ struct channel_data channel_info[MAX_CHANNEL_NUM];
 
 
 
-int	mynet_stop(struct net_device *dev)
-{
-    ring_deinit();
-    unregister_irq(dev);
-    hw_deinit(dev);
-}
+
 int	mynet_open(struct net_device *dev)
 {
     //hw_init
@@ -101,12 +101,16 @@ int	mynet_open(struct net_device *dev)
         writel(1,                                                 &channel_info[i].reg_base_channel->rx_ctl_status);//start
     }
 
-    netif_tx_start_all_queues(netdev);
-
-
+    netif_tx_start_all_queues(dev);
     return 0;
 }
-
+int	mynet_stop(struct net_device *dev)
+{
+    netif_tx_stop_all_queues(dev);
+    ring_deinit();
+    unregister_irq(dev);
+    //hw_deinit(dev);
+}
 netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *dev)
 {
     u16 channelIndex = skb_get_queue_mapping(skb);
@@ -114,8 +118,6 @@ netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *dev)
         netif_tx_stop_queue(netdev_get_tx_queue(dev, channelIndex));
         return NETDEV_TX_BUSY;
     }
-
-
 
     //start tx anyway
     writel_relaxed(1, &channel->reg_base_channel->tx_ctl_status);
@@ -294,8 +296,8 @@ static int mynet_probe(struct platform_device *pdev)
     real_rx_channel_count = param_real_rx_channel_count;
     poll_weight_tx = param_poll_weight_tx;
     poll_weight_tx = param_poll_weight_rx;
-    tx_ring_node_count = param_tx_ring_node_count+1;
-    rx_ring_node_count = param_rx_ring_node_count+1;
+    tx_ring_node_count = param_tx_ring_node_count;
+    rx_ring_node_count = param_rx_ring_node_count;
     if(real_tx_channel_count > MAX_CHANNEL_NUM || real_tx_channel_count <= 0) {
         pr_err("%s: real_tx_channel_count is not valid\n",__func__);
         return -1;

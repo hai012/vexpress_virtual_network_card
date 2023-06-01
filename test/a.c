@@ -1,20 +1,14 @@
 #include <stdio.h>
 #include <unistd.h>
-#include <signal.h>
-
-void sig(int signo)
-{
-	printf("deal %d\n",signo);
-}
-
 int main(){
+	
+	int a=0x12345678;
+	char b=0xaa;
 
-short a=32767;
+	char buf[100];
+printf("ret=%d\n", snprintf(buf,100,"%x:%04hhx\n", a,b) );
+printf("%s\n",buf);
 
-signal(SIGFPE,sig);
-printf("main %d\n", a/0);
-printf("main %d\n", ++a);
-while(1);
 
 }
 

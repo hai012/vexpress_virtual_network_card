@@ -31,6 +31,15 @@ TSO/UFO/GRO is related to NETIF_F_FRAGLIST and NETIF_F_SG
 
 
 
+
+#include <linux/scatterlist.h>
+#include <linux/skbuff.h>
+#include <linux/types.h>
+#include <linux/netdevice.h>
+#include <linux/spinlock_types.h>
+#include <linux/dmapool.h>
+
+
 //NET_SKB_PAD
 //NET_IP_ALIGN  0 or 2
 //ETH_HLEN 14,dest mac /src mac type
@@ -45,7 +54,7 @@ TSO/UFO/GRO is related to NETIF_F_FRAGLIST and NETIF_F_SG
 
 
 
-#define MAX_SKB_FRAGS 17
+//#define MAX_SKB_FRAGS 17
 #define NODE_F_BELONG (1<<0)
 #define NODE_F_TRANSFER (1<<1)
 
@@ -110,12 +119,12 @@ struct ring_node_info {
     struct ring_node_info * next;
 
     //tx
-    struct skbuff *skb;
+    struct sk_buff *skb;
     struct scatterlist *scl;
     int num_sg;
     //rx
     char * linear_buffer;
-}
+};
 
 //TX    channel <- Qdisc(do not need lock queue) <- cpu
 //RX    hash(skb) -> cpu
@@ -128,6 +137,8 @@ struct channel_data {
     struct napi_struct napi_tx;//preempt
     struct napi_struct napi_rx;
 
+    //tx_ring_empty point to a node which is empty
+    //if tx_ring_full!=tx_ring_empty, then tx_ring_full point to a full node
     struct ring_node_info *tx_ring_empty;
     struct ring_node_info *tx_ring_full;
     spinlock_t spinlock_tx_ring_empty;
@@ -135,7 +146,7 @@ struct channel_data {
 
     struct ring_node_info *rx_ring;
 
-}
+};
 
 //config data
 extern int real_tx_channel_count;
@@ -156,11 +167,19 @@ extern struct channel_data channel_info[MAX_CHANNEL_NUM];
 
 int inline is_node_belong_to_hw(struct ring_node_info *node)
 {
-    return (read_relaxed(&node->virtual_addr->flag) & NODE_F_BELONG);
+    return readl_relaxed(&node->virtual_addr->flag) & NODE_F_BELONG;
 }
 int inline is_node_transfer(struct ring_node_info *node)
 {
-    return read_relaxed(&node->virtual_addr->flag) & NODE_F_TRANSFER;
+    return readl_relaxed(&node->virtual_addr->flag) & NODE_F_TRANSFER;
 }
+
+
+int ring_init(void);
+int rx_ring_dma_init(void);
+int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb);
+
+
+
 
 #endif

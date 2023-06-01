@@ -1,5 +1,9 @@
-
-#include <linux/types.h> 
+#include <linux/scatterlist.h>
+#include <linux/skbuff.h>
+#include <linux/types.h>
+#include <linux/netdevice.h>
+#include <linux/spinlock_types.h>
+#include <linux/dmapool.h>
 #include "mynet.h"
 
 
@@ -80,13 +84,14 @@ int rx_ring_dma_init(void)
 {
     int channelIndex;
     struct napi_struct *napi;
-    struct ring_node_info *rx_ring_start;
-    struct ring_node_info * init_node;
-    struct ring_node_info * deinit_node;
+    struct ring_node_info *rx_ring_end;
+    struct ring_node_info * init_start;
+    struct ring_node_info * init_end;
 
     for(channelIndex=0; channelIndex<real_rx_channel_count; ++channelIndex) {
-        rx_ring_start=channel_info[channelIndex].rx_ring;
-        for(init_node=rx_ring_start; init_node->next != rx_ring_start; init_node=init_node->next)
+        init_start=channel_info[channelIndex].rx_ring;
+        init_end=channel_info[channelIndex].rx_ring;
+        do
         {
             char *liner_buffer = netdev_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
             if(unlikely(!liner_buffer)) {
@@ -104,23 +109,25 @@ int rx_ring_dma_init(void)
                 skb_free_frag(liner_buffer);  //page_frag_free
                 goto err_clean_previous;
             }
-            init_node->liner_buffer = liner_buffer;
-            writel_relaxed(dma_addr,                        &init_node->virtual_addr->base);
-            writel_relaxed(MAX_RECV_LEN,                    &init_node->virtual_addr->len);
-            writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &init_node->virtual_addr->flag);
-        }
+            init_start->liner_buffer = liner_buffer;
+            writel_relaxed(dma_addr,                        &init_start->virtual_addr->base);
+            writel_relaxed(MAX_RECV_LEN,                    &init_start->virtual_addr->len);
+            writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &init_start->virtual_addr->flag);
+
+            init_start = init_start->next;
+        }while(init_start != init_end);
     }
     return 0;
 
 err_clean_previous:
     for(; channelIndex >= 0; --channelIndex) {
         for(struct ring_node_info * deinit_node=channel_info[channelIndex].rx_ring;
-            deinit_node != init_node;
+            deinit_node != init_start;
             deinit_node = deinit_node->next)
         {
             dma_unmap_single(netdev,
-                             deinit_node->virtual_addr->base,
-                             MAX_RX_SKB_BUFF_LEN-2,
+                             deinit_node->liner_buffer + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
+                             MAX_RECV_LEN,
                              DMA_FROM_DEVICE);
             skb_free_frag(deinit_node->liner_buffer);
         }
@@ -212,3 +219,37 @@ dma_map_sg_failed:
 	return err;
 }
 
+
+void ring_deinit()
+{
+    int intchannelIndex;
+    struct ring_node_info * deinit_start;
+    struct ring_node_info * deinit_end;
+    for(intchannelIndex=0; channelIndex<real_rx_channel_count; ++channelIndex) {
+        deinit_start = deinit_end =  channel_info[channelIndex].rx_ring;
+        do{
+            dma_unmap_single(netdev,
+                             deinit_start->liner_buffer + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
+                             MAX_RECV_LEN,
+                             DMA_FROM_DEVICE);
+            skb_free_frag(deinit_start->liner_buffer);
+            deinit_start = deinit_start->next;
+        }while(deinit_start != deinit_end);
+
+        deinit_start = channel_info[channelIndex].tx_ring_full;
+        deinit_end = channel_info[channelIndex].tx_ring_empty;
+        while(deinit_start != deinit_end) {
+            if(is_node_transfer(channel->tx_ring_full)) {
+                //now , we find the last frag
+                dma_unmap_sg(netdev, channel->tx_ring_full->scl, channel->tx_ring_full->num_sg, DMA_FROM_DEVICE);
+                devm_kfree(netdev,channel->tx_ring_full->scl);
+                kfree_skb(channel->tx_ring_full->skb);
+                ++count;
+                format_error=0;
+            }
+            channel_full = channel_full->next;
+        }
+    }
+    dma_pool_destroy(pool);
+    devm_kfree(dev,ring_node_info_table);
+}

@@ -1,0 +1,1 @@
+cmd_/home/haijie.gong/disk/vexpress/driver/mynet_driver.mod := printf '%s\n'   mynet.o ring.o irq.o | awk '!x[$$0]++ { print("/home/haijie.gong/disk/vexpress/driver/"$$0) }' > /home/haijie.gong/disk/vexpress/driver/mynet_driver.mod
