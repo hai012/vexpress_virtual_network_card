@@ -247,7 +247,7 @@ void ring_deinit()
                 ++count;
                 format_error=0;
             }
-            channel_full = channel_full->next;
+            deinit_start = deinit_start->next;
         }
     }
     dma_pool_destroy(pool);

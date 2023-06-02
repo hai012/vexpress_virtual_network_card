@@ -62,7 +62,7 @@ struct channel_data channel_info[MAX_CHANNEL_NUM];
 
 
 
-int	mynet_open(struct net_device *dev)
+int	mynet_open(struct net_device *netdev)
 {
     //hw_init
     for(int i=0; i < MAX_CHANNEL_NUM; ++i) {
@@ -77,50 +77,50 @@ int	mynet_open(struct net_device *dev)
         writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_mask  );
     }
 
-    if(register_irq(dev)) {
+    if(register_irq()) {
         return -1;
     }
 
 
-    if(ring_init(dev)){
-        unregister_irq(dev);
-        return -1
+    if(ring_init()){
+        unregister_irq();
+        return -1;
     }
 
     //hw_start_real_channel
-    for(int i=0; i < info->real_tx_channel_count; ++i) {
+    for(int i=0; i < real_tx_channel_count; ++i) {
         writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->tx_irq_flag);
         writel_relaxed(IRQF_TX_SEND,                               &channel_info[i].reg_base_channel->tx_irq_mask);//unmask IRQF_TX_SEND
         writel(1,                                                 &channel_info[i].reg_base_channel->tx_ctl_status);//start
     }
-    for(int i=0; i < info->real_rx_channel_count; ++i) {
+    for(int i=0; i < real_rx_channel_count; ++i) {
         writel_relaxed(channel_info[i].rx_ring->dma_addr,    &channel_info[i].reg_base_channel->rx_ring_base);//set base
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->rx_irq_flag);
         writel_relaxed(IRQF_RX_RECV,                                &channel_info[i].reg_base_channel->rx_irq_mask);//unmask IRQF_RX_RECV
         writel(1,                                                 &channel_info[i].reg_base_channel->rx_ctl_status);//start
     }
 
-    netif_tx_start_all_queues(dev);
+    netif_tx_start_all_queues(netdev);
     return 0;
 }
-int	mynet_stop(struct net_device *dev)
+int	mynet_stop(struct net_device *netdev)
 {
-    netif_tx_stop_all_queues(dev);
+    netif_tx_stop_all_queues(netdev);
     ring_deinit();
-    unregister_irq(dev);
-    //hw_deinit(dev);
+    unregister_irq(netdev);
+    //hw_deinit(netdev);
 }
-netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *dev)
+netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
 {
     u16 channelIndex = skb_get_queue_mapping(skb);
-    if(insert_skb_to_tx_ring(&channel_info[channelIndex],dev)) {
-        netif_tx_stop_queue(netdev_get_tx_queue(dev, channelIndex));
+    if(insert_skb_to_tx_ring(&channel_info[channelIndex],skb)) {
+        netif_tx_stop_queue(netdev_get_tx_queue(netdev, channelIndex));
         return NETDEV_TX_BUSY;
     }
 
     //start tx anyway
-    writel_relaxed(1, &channel->reg_base_channel->tx_ctl_status);
+    writel_relaxed(1, &channel_info[channelIndex].reg_base_channel->tx_ctl_status);
    /*uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
     if(flag & IRQF_TX_EMPTY) {
         flag &= ~IRQF_TX_EMPTY;//clear TX_EMPTY flag
@@ -143,7 +143,7 @@ static const struct net_device_ops mynet_netdev_ops = {
 
 static int mynet_poll_tx(struct napi_struct *napi, int budget)
 {
-    struct channel_data * channel = continerof(napi, struct channel_data, napi_tx);
+    struct channel_data * channel = container_of(napi, struct channel_data, napi_tx);
     int count=0;
     int format_error = 1;
 
@@ -161,8 +161,8 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
         }
         if(is_node_transfer(channel->tx_ring_full)) {
             //now , we find the last frag
-            dma_unmap_sg(netdev, channel->tx_ring_full->scl, channel->tx_ring_full->num_sg, DMA_FROM_DEVICE);
-            devm_kfree(netdev,channel->tx_ring_full->scl);
+            dma_unmap_sg(&netdev->dev, channel->tx_ring_full->scl, channel->tx_ring_full->num_sg, DMA_FROM_DEVICE);
+            devm_kfree(&netdev->dev,channel->tx_ring_full->scl);
             kfree_skb(channel->tx_ring_full->skb);
             ++count;
             format_error=0;
@@ -176,7 +176,7 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     BUG_ON(format_error);//unknown error,tx ring data was damaged
 
     //wake up queue anyway
-    netif_tx_wake_queue(netdev,netdev_get_tx_queue(channel->queue_index));
+    netif_tx_wake_queue(netdev_get_tx_queue(netdev,channel->queue_index));
 
     //unmask IRQF_TX_SEND
     //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
@@ -186,7 +186,7 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
 }
 static int mynet_poll_rx(struct napi_struct *napi, int budget)
 {
-    struct channel_data * channel = continerof(napi, struct channel_data, napi_tx);
+    struct channel_data * channel = container_of(napi, struct channel_data, napi_tx);
     int count=0;
     int format_error=1;
     while(budget>count)
@@ -203,11 +203,11 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 pr_err("napi_alloc_frag failed");
                 return count;
             }
-            dma_addr_t dma_addr = dma_map_single(netdev,
+            dma_addr_t dma_addr = dma_map_single(&netdev->dev,
                                                  linear_buffer_replace + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
                                                  MAX_RECV_LEN,
                                                  DMA_TO_DEVICE);
-            if (unlikely(dma_mapping_error(netdev, dma_addr))) {
+            if (unlikely(dma_mapping_error(&netdev->dev, dma_addr))) {
                 pr_err("dma_map_single  failed");
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
                 return count;
@@ -249,7 +249,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     //mask |= IRQF_RX_RECV;
     writel_relaxed(IRQF_RX_RECV,  &channel->reg_base_channel->tx_irq_mask);
 
-
+napi_alloc_frag
     //start rx anyway
     writel_relaxed(1,  &channel->reg_base_channel->rx_ctl_status);
 
@@ -296,7 +296,7 @@ static int mynet_probe(struct platform_device *pdev)
     real_rx_channel_count = param_real_rx_channel_count;
     poll_weight_tx = param_poll_weight_tx;
     poll_weight_tx = param_poll_weight_rx;
-    tx_ring_node_count = param_tx_ring_node_count;
+    tx_ring_node_count = param_tx_ring_node_count+1;
     rx_ring_node_count = param_rx_ring_node_count;
     if(real_tx_channel_count > MAX_CHANNEL_NUM || real_tx_channel_count <= 0) {
         pr_err("%s: real_tx_channel_count is not valid\n",__func__);

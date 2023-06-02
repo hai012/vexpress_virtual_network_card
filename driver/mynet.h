@@ -178,8 +178,8 @@ int inline is_node_transfer(struct ring_node_info *node)
 int ring_init(void);
 int rx_ring_dma_init(void);
 int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb);
-
-
-
+int register_irq(void);
+void unregister_irq(void);
+void ring_deinit(void);
 
 #endif
