@@ -1,0 +1,1 @@
+cmd_/home/ghj/work/vexpress/driver/mynet_driver.o := /home/ghj/work/vexpress/tools/gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf/bin/arm-none-linux-gnueabihf-ld  -EL -z noexecstack     -r -o /home/ghj/work/vexpress/driver/mynet_driver.o @/home/ghj/work/vexpress/driver/mynet_driver.mod 

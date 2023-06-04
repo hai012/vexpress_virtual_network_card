@@ -165,11 +165,11 @@ extern struct channel_data channel_info[MAX_CHANNEL_NUM];
 
 
 
-int inline is_node_belong_to_hw(struct ring_node_info *node)
+static int inline is_node_belong_to_hw(struct ring_node_info *node)
 {
     return readl_relaxed(&node->virtual_addr->flag) & NODE_F_BELONG;
 }
-int inline is_node_transfer(struct ring_node_info *node)
+static int inline is_node_transfer(struct ring_node_info *node)
 {
     return readl_relaxed(&node->virtual_addr->flag) & NODE_F_TRANSFER;
 }

@@ -18,15 +18,12 @@
 #include <linux/types.h>
 #include <linux/netdevice.h>
 #include <linux/spinlock_types.h>
-
-
+#include <linux/mod_devicetable.h>
+#include <linux/etherdevice.h>
 #include "mynet.h"
 
 
-static int param_poll_weight_tx = 64;
-module_param(param_poll_weight_tx, int, 0644);
-static int param_poll_weight_rx = 64;
-module_param(param_poll_weight_rx, int, 0644);
+
 
 static int param_real_tx_channel_count = 4;
 module_param(param_real_tx_channel_count, int, 0644);
@@ -108,8 +105,9 @@ int	mynet_stop(struct net_device *netdev)
 {
     netif_tx_stop_all_queues(netdev);
     ring_deinit();
-    unregister_irq(netdev);
+    unregister_irq();
     //hw_deinit(netdev);
+    return 0;
 }
 netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
 {
@@ -135,6 +133,7 @@ static const struct net_device_ops mynet_netdev_ops = {
 	.ndo_stop		= mynet_stop,
 	//.ndo_set_config		= mynet_config,
 	.ndo_start_xmit		= mynet_xmit,
+    .ndo_set_mac_address = eth_mac_addr,
 	//.ndo_do_ioctl		= mynet_ioctl,
 	//.ndo_get_stats		= mynet_stats,
 	//.ndo_change_mtu		= mynet_change_mtu,
@@ -212,20 +211,20 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
                 return count;
             }
-            dma_unmap_single(netdev,
+            dma_unmap_single(&netdev->dev,
                             channel->rx_ring->virtual_addr->base,
                             channel->rx_ring->virtual_addr->len,
                             DMA_FROM_DEVICE);
             char * linear_buffer_recv = channel->rx_ring->linear_buffer;//
 
-            channel->rx_ring->liner_buffer = linear_buffer_replace;
+            channel->rx_ring->linear_buffer = linear_buffer_replace;
             writel_relaxed(dma_addr,                        &channel->rx_ring->virtual_addr->base);
             writel_relaxed(MAX_RECV_LEN,                    &channel->rx_ring->virtual_addr->len);
             writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &channel->rx_ring->virtual_addr->flag);
             channel->rx_ring = channel->rx_ring->next;
 
             //recv
-            struct skbuff * skb = build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
+            struct sk_buff * skb = build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
             if (unlikely(!skb)) {
                 skb_free_frag(linear_buffer_recv);
                 netdev->stats.rx_dropped++;
@@ -233,7 +232,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             }
             skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
             skb_record_rx_queue(skb,channel->queue_index);
-            napi_gro_receive(skb);
+            napi_gro_receive(napi,skb);
             ++count;
             format_error = 0;
         //}
@@ -249,7 +248,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     //mask |= IRQF_RX_RECV;
     writel_relaxed(IRQF_RX_RECV,  &channel->reg_base_channel->tx_irq_mask);
 
-napi_alloc_frag
+
     //start rx anyway
     writel_relaxed(1,  &channel->reg_base_channel->rx_ctl_status);
 
@@ -258,6 +257,7 @@ napi_alloc_frag
 
 static int mynet_probe(struct platform_device *pdev)
 {
+    int irq;
     //parse dtb
     struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
     if (!res) {
@@ -268,20 +268,20 @@ static int mynet_probe(struct platform_device *pdev)
     for(int i=0; i<MAX_CHANNEL_NUM;++i) {
         res = platform_get_resource(pdev, IORESOURCE_MEM, i);
         if (!res) {
-            pr_err("%s: fail to get RegChannel virtual base addr, channel=%d\n",__func__,i)
+            pr_err("%s: fail to get RegChannel virtual base addr, channel=%d\n",__func__,i);
             return -1;
         }
         channel_info[i].reg_base_channel = (struct RegChannel *)res->start;
 
-        int irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL);
+        irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL);
         if(irq < 0) {
-            pr_err("%s: fail to get tx irq, channel=%d,irq=%d\n",__func__,i,j);
+            pr_err("%s: fail to get tx irq, channel=%d,irq=%d\n",__func__,i,0);
             return -1;
         }
         channel_info[i].tx_irqs = irq;
-        int irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL+1);
+        irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL+1);
         if(irq < 0) {
-            pr_err("%s: fail to get rx irq, channel=%d,irq=%d\n",__func__,i,j);
+            pr_err("%s: fail to get rx irq, channel=%d,irq=%d\n",__func__,i,1);
             return -1;
         }
         channel_info[i].rx_irqs = irq;
@@ -294,8 +294,6 @@ static int mynet_probe(struct platform_device *pdev)
     //param check
     real_tx_channel_count = param_real_tx_channel_count;
     real_rx_channel_count = param_real_rx_channel_count;
-    poll_weight_tx = param_poll_weight_tx;
-    poll_weight_tx = param_poll_weight_rx;
     tx_ring_node_count = param_tx_ring_node_count+1;
     rx_ring_node_count = param_rx_ring_node_count;
     if(real_tx_channel_count > MAX_CHANNEL_NUM || real_tx_channel_count <= 0) {
@@ -312,17 +310,17 @@ static int mynet_probe(struct platform_device *pdev)
                                "mynet%d",
                                NET_NAME_UNKNOWN,
                                ether_setup,
-                               mynet_info.real_tx_channel_count, 
-                               mynet_info.real_rx_channel_count);
+                               real_tx_channel_count, 
+                               real_rx_channel_count);
     if(!netdev) {
         pr_err("%s: failed to create netdev\n",__func__);
         return -1;
     }
     for(int i=0; i<real_tx_channel_count; ++i) {
-	    netif_napi_add(netdev, &channel_info[i].napi_tx, mynet_poll_tx, poll_weight_tx);
+	    netif_napi_add(netdev, &channel_info[i].napi_tx, mynet_poll_tx);
     }
     for(int i=0; i<real_rx_channel_count; ++i) {
-        netif_napi_add(netdev, &channel_info[i].napi_rx, mynet_poll_rx, poll_weight_rx);
+        netif_napi_add(netdev, &channel_info[i].napi_rx, mynet_poll_rx);
     }
     netdev->netdev_ops = &mynet_netdev_ops;
 	netdev->flags           |= IFF_NOARP;
@@ -337,7 +335,7 @@ static int mynet_probe(struct platform_device *pdev)
 
 static int mynet_remove(struct platform_device *dev)
 {
-    unregister_irq(netdev);
+    unregister_irq();
     unregister_netdev(netdev);
     free_netdev(netdev);
     return 0;

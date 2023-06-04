@@ -61,13 +61,13 @@ int register_irq(void)
     for(int i=0; i<real_rx_channel_count; ++i) {
         snprintf(name_buffer,30,"mynet_irq_rx/%d",i);
         if(request_irq(channel_info[i].rx_irqs,//irq_num
-                    irq_handler,//func
+                    irq_handler_rx,//func
                     0,//irqflags
                     name_buffer,//irqname
                     &channel_info[i])) {//dev_id
             pr_err("%s: fail to request %s\n",__func__,name_buffer);
             while( --i >= 0 ) {
-                free_irq(channel_info[i].rx_irqs);
+                free_irq(channel_info[i].rx_irqs, &channel_info[i]);
             }
             return -1;
         }
@@ -75,24 +75,25 @@ int register_irq(void)
     for(int i=0; i<real_tx_channel_count; ++i) {
         snprintf(name_buffer,30,"mynet_irq_tx/%d",i);
         if(request_irq(channel_info[i].tx_irqs,//irq_num
-                    irq_handler,//func
+                    irq_handler_tx,//func
                     0,//irqflags
                     name_buffer,//irqname
                     &channel_info[i])) {//dev_id
             pr_err("%s: fail to request %s\n",__func__,name_buffer);
             while( --i >= 0 ) {
-                free_irq(channel_info[i].tx_irqs);
+                free_irq(channel_info[i].tx_irqs, &channel_info[i]);
             }
             return -1;
         }
     }
+    return 0;
 }
 void unregister_irq(void)
 {
-    for(int i=0; i<real_rx_channel_count ++i) {
-        free_irq(channel_info[i].rx_irqs);
+    for(int i=0; i<real_rx_channel_count; ++i) {
+        free_irq(channel_info[i].rx_irqs, &channel_info[i]);
     }
-    for(int i=0; i<real_tx_channel_count ++i) {
-        free_irq(channel_info[i].tx_irqs);
+    for(int i=0; i<real_tx_channel_count; ++i) {
+        free_irq(channel_info[i].tx_irqs, &channel_info[i]);
     }
 }

@@ -22,9 +22,8 @@
 #make -j16 zImage && cp arch/arm/boot/zImage /home/haijie.gong/imx_qemu_run/imx6q-system-image/
 #make -j16 imx6q-sabrelite.dtb && cp  arch/arm/boot/dts/100ask_imx6ull_qemu.dtb /home/haijie.gong/imx_qemu_run/imx6q-system-image/
 
-cp board_defconfig ../out/kernel/.config
-#cp ../out/kernel/.config board_defconfig
-
+#cp vexpress_board_defconfig ../out/kernel/.config
+cp vexpress_board_debug_defconfig ../out/kernel/.config
 make -j16 KBUILD_OUTPUT=../out/kernel zImage
 make -j16 KBUILD_OUTPUT=../out/kernel modules
 make -j16 KBUILD_OUTPUT=../out/kernel vexpress-v2p-ca9.dtb
@@ -33,6 +32,8 @@ make -j16 KBUILD_OUTPUT=../out/kernel vexpress-v2p-ca15-tc1.dtb
 
 echo "
 make -j16  KBUILD_OUTPUT=../out/kernel menuconfig
+cp ../out/kernel/.config vexpress_board_defconfig
+cp ../out/kernel/.config vexpress_board_debug_defconfig
 make -j16  KBUILD_OUTPUT=../out/kernel zImage
 make -j16  KBUILD_OUTPUT=../out/kernel modules
 make -j16  KBUILD_OUTPUT=../out/kernel vexpress-v2p-ca9.dtb
