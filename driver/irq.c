@@ -59,7 +59,7 @@ int register_irq(void)
 {
     char name_buffer[30];
     for(int i=0; i<real_rx_channel_count; ++i) {
-        snprintf(name_buffer,30,"mynet_irq_rx/%d",i);
+        snprintf(name_buffer,30,"mynet_irq_rx_%d",i);
         if(request_irq(channel_info[i].rx_irqs,//irq_num
                     irq_handler_rx,//func
                     0,//irqflags
@@ -73,7 +73,7 @@ int register_irq(void)
         }
     }
     for(int i=0; i<real_tx_channel_count; ++i) {
-        snprintf(name_buffer,30,"mynet_irq_tx/%d",i);
+        snprintf(name_buffer,30,"mynet_irq_tx_%d",i);
         if(request_irq(channel_info[i].tx_irqs,//irq_num
                     irq_handler_tx,//func
                     0,//irqflags

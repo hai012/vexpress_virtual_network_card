@@ -264,15 +264,21 @@ static int mynet_probe(struct platform_device *pdev)
         pr_err("%s: fail to get RegCommon virtual base addr\n",__func__);
         return -1;
     }
-    reg_base_common = (struct RegCommon *)res->start;
+    reg_base_common = devm_ioremap_resource(&pdev->dev, res);
+    if (IS_ERR(reg_base_common))
+        return PTR_ERR(reg_base_common);
+
     for(int i=0; i<MAX_CHANNEL_NUM;++i) {
-        res = platform_get_resource(pdev, IORESOURCE_MEM, i);
+        res = platform_get_resource(pdev, IORESOURCE_MEM, i+1);
         if (!res) {
             pr_err("%s: fail to get RegChannel virtual base addr, channel=%d\n",__func__,i);
             return -1;
         }
-        channel_info[i].reg_base_channel = (struct RegChannel *)res->start;
-
+        channel_info[i].reg_base_channel = devm_ioremap_resource(&pdev->dev, res);
+        if (IS_ERR(channel_info[i].reg_base_channel))
+            return PTR_ERR(channel_info[i].reg_base_channel);
+    }
+    for(int i=0; i<MAX_CHANNEL_NUM;++i) {
         irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL);
         if(irq < 0) {
             pr_err("%s: fail to get tx irq, channel=%d,irq=%d\n",__func__,i,0);
@@ -286,6 +292,9 @@ static int mynet_probe(struct platform_device *pdev)
         }
         channel_info[i].rx_irqs = irq;
 
+    }
+
+    for(int i=0; i<MAX_CHANNEL_NUM;++i) {
         spin_lock_init(&channel_info[i].spinlock_tx_ring_empty);
         spin_lock_init(&channel_info[i].spinlock_tx_ring_full);
         channel_info[i].queue_index = i;

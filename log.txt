@@ -1,0 +1,64 @@
+qemu-system-arm: Slirp: Failed to send packet, ret: -1
+mynet_driver: loading out-of-tree module taints kernel.
+drm-clcd-pl111 10020000.clcd: DVI muxed to daughterboard 1 (core tile) CLCD
+drm-clcd-pl111 10020000.clcd: initializing Versatile Express PL111
+------------[ cut here ]------------
+WARNING: CPU: 3 PID: 154 at kernel/dma/mapping.c:499 dma_alloc_attrs+0xc4/0xf8
+Modules linked in: mynet_driver(O)
+CPU: 3 PID: 154 Comm: ifconfig Tainted: G           O       6.1.15 #4
+Hardware name: ARM-Versatile Express
+ unwind_backtrace from show_stack+0x10/0x14
+ show_stack from dump_stack_lvl+0x40/0x4c
+ dump_stack_lvl from __warn+0x90/0xb8
+ __warn from warn_slowpath_fmt+0x5c/0xb8
+ warn_slowpath_fmt from dma_alloc_attrs+0xc4/0xf8
+ dma_alloc_attrs from dma_pool_alloc+0x114/0x1c0
+ dma_pool_alloc from ring_init+0x100/0x368 [mynet_driver]
+ ring_init [mynet_driver] from mynet_open+0x64/0x174 [mynet_driver]
+ mynet_open [mynet_driver] from __dev_open+0xe0/0x190
+ __dev_open from __dev_change_flags+0x1ac/0x224
+ __dev_change_flags from dev_change_flags+0x14/0x44
+ dev_change_flags from devinet_ioctl+0x608/0x7d8
+ devinet_ioctl from inet_ioctl+0x1bc/0x2c0
+ inet_ioctl from sock_ioctl+0x474/0x54c
+ sock_ioctl from sys_ioctl+0x510/0xbbc
+ sys_ioctl from ret_fast_syscall+0x0/0x54
+Exception stack(0xcb499fa8 to 0xcb499ff0)
+9fa0:                   0014ae4b 7ebdcc80 00000003 00008914 7ebdcc80 0014ae4b
+9fc0: 0014ae4b 7ebdcc80 0011dea0 00000036 00174d68 7ebdcf3f 00000003 7ebdce3c
+9fe0: 00000000 7ebdcc1c 0010338d 00011b98
+---[ end trace 0000000000000000 ]---
+------------[ cut here ]------------
+WARNING: CPU: 3 PID: 154 at kernel/dma/mapping.c:152 dma_map_page_attrs+0x1dc/0x2e8
+Modules linked in: mynet_driver(O)
+CPU: 3 PID: 154 Comm: ifconfig Tainted: G        W  O       6.1.15 #4
+Hardware name: ARM-Versatile Express
+ unwind_backtrace from show_stack+0x10/0x14
+ show_stack from dump_stack_lvl+0x40/0x4c
+ dump_stack_lvl from __warn+0x90/0xb8
+ __warn from warn_slowpath_fmt+0x5c/0xb8
+ warn_slowpath_fmt from dma_map_page_attrs+0x1dc/0x2e8
+ dma_map_page_attrs from rx_ring_dma_init+0xa4/0x1dc [mynet_driver]
+ rx_ring_dma_init [mynet_driver] from ring_init+0x304/0x368 [mynet_driver]
+ ring_init [mynet_driver] from mynet_open+0x64/0x174 [mynet_driver]
+ mynet_open [mynet_driver] from __dev_open+0xe0/0x190
+ __dev_open from __dev_change_flags+0x1ac/0x224
+ __dev_change_flags from dev_change_flags+0x14/0x44
+ dev_change_flags from devinet_ioctl+0x608/0x7d8
+ devinet_ioctl from inet_ioctl+0x1bc/0x2c0
+ inet_ioctl from sock_ioctl+0x474/0x54c
+ sock_ioctl from sys_ioctl+0x510/0xbbc
+ sys_ioctl from ret_fast_syscall+0x0/0x54
+Exception stack(0xcb499fa8 to 0xcb499ff0)
+9fa0:                   0014ae4b 7ebdcc80 00000003 00008914 7ebdcc80 0014ae4b
+9fc0: 0014ae4b 7ebdcc80 0011dea0 00000036 00174d68 7ebdcf3f 00000003 7ebdce3c
+9fe0: 00000000 7ebdcc1c 0010338d 00011b98
+---[ end trace 0000000000000000 ]---
+dma_map_single dma_dst_addr failed
+ring_init:fail to alloc and map skb for rx_ring
+net mynet0: dma_pool_destroy dma_pool, 450d02fa busy
+net mynet0: dma_pool_destroy dma_pool, cbdf9bd1 busy
+net mynet0: dma_pool_destroy dma_pool, 6236903a busy
+net mynet0: dma_pool_destroy dma_pool, 0f032f8b busy
+ifconfig: SIOCSIFFLAGS: Operation not permitted
+

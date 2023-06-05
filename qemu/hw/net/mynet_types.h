@@ -90,6 +90,8 @@ struct ring_node_t {
 static inline void *guest_to_host(hwaddr guest_phy_addr)
 {
     MemoryRegionSection mem_section = memory_region_find(get_system_memory(), guest_phy_addr, 0);
+    if(!mem_section.mr)
+        return NULL;
     return memory_region_get_ram_ptr(mem_section.mr) + mem_section.offset_within_region;
 }
 
