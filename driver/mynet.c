@@ -53,6 +53,7 @@ struct RegCommon * reg_base_common;
 struct dma_pool * pool;
 struct ring_node_info *ring_node_info_table;
 struct net_device * netdev;
+struct platform_device *pdev;
 //channel data
 struct channel_data channel_info[MAX_CHANNEL_NUM];
 
@@ -80,7 +81,6 @@ int	mynet_open(struct net_device *netdev)
 
 
     if(ring_init()){
-        unregister_irq();
         return -1;
     }
 
@@ -255,14 +255,26 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     return count;
 }
 
-static int mynet_probe(struct platform_device *pdev)
+static int mynet_probe(struct platform_device *dev)
 {
     int irq;
+    pdev = dev;
+
+
+    /*if(!dma_set_mask(&pdev->dev, DMA_BIT_MASK(32))) {
+        pr_err("%s: dma_set_mask failed\n",__func__);
+        return -1;
+    }
+    if(!dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32))) {
+        pr_err("%s: dma_set_coherent_mask failed\n",__func__);
+        return -1;
+    }*/
+
     //parse dtb
     struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
     if (!res) {
         pr_err("%s: fail to get RegCommon virtual base addr\n",__func__);
-        return -1;
+        return -ENODEV;
     }
     reg_base_common = devm_ioremap_resource(&pdev->dev, res);
     if (IS_ERR(reg_base_common))
@@ -272,7 +284,7 @@ static int mynet_probe(struct platform_device *pdev)
         res = platform_get_resource(pdev, IORESOURCE_MEM, i+1);
         if (!res) {
             pr_err("%s: fail to get RegChannel virtual base addr, channel=%d\n",__func__,i);
-            return -1;
+            return -ENODEV;
         }
         channel_info[i].reg_base_channel = devm_ioremap_resource(&pdev->dev, res);
         if (IS_ERR(channel_info[i].reg_base_channel))
@@ -282,16 +294,15 @@ static int mynet_probe(struct platform_device *pdev)
         irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL);
         if(irq < 0) {
             pr_err("%s: fail to get tx irq, channel=%d,irq=%d\n",__func__,i,0);
-            return -1;
+            return -ENODEV;
         }
         channel_info[i].tx_irqs = irq;
         irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL+1);
         if(irq < 0) {
             pr_err("%s: fail to get rx irq, channel=%d,irq=%d\n",__func__,i,1);
-            return -1;
+            return -ENODEV;
         }
         channel_info[i].rx_irqs = irq;
-
     }
 
     for(int i=0; i<MAX_CHANNEL_NUM;++i) {
@@ -317,7 +328,7 @@ static int mynet_probe(struct platform_device *pdev)
     //netdev init
     netdev = alloc_netdev_mqs( 0,
                                "mynet%d",
-                               NET_NAME_UNKNOWN,
+                               NET_NAME_ENUM,
                                ether_setup,
                                real_tx_channel_count, 
                                real_rx_channel_count);
@@ -344,7 +355,6 @@ static int mynet_probe(struct platform_device *pdev)
 
 static int mynet_remove(struct platform_device *dev)
 {
-    unregister_irq();
     unregister_netdev(netdev);
     free_netdev(netdev);
     return 0;

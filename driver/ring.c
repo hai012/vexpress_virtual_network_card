@@ -13,21 +13,22 @@ int ring_init(void)
 {
     size_t node_count = (1+real_tx_channel_count) * tx_ring_node_count +
                         (1+real_rx_channel_count) * rx_ring_node_count;
-    ring_node_info_table = devm_kcalloc(&netdev->dev,node_count,sizeof(struct ring_node_info),GFP_KERNEL);
+    ring_node_info_table = devm_kcalloc(&pdev->dev,node_count,sizeof(struct ring_node_info),GFP_KERNEL);
     if(unlikely(!ring_node_info_table)) {
         pr_err("%s:alloc  ring_node_info_table failed",__func__);
         return -1;
     }
-    pool = dma_pool_create("dma_pool",&netdev->dev, sizeof(struct ring_node_t),4,0);
+    pool = dmam_pool_create(pdev->name,&pdev->dev, sizeof(struct ring_node_t),4,0);
     if(unlikely(!pool)) {
         pr_err("%s:dma_pool_create failed",__func__);
-        devm_kfree(&netdev->dev,ring_node_info_table);
+        devm_kfree(&pdev->dev,ring_node_info_table);
         return -1;
     }
 
 
     struct ring_node_info *ptr;
-    for(int i=0; i<real_tx_channel_count; ++i) {
+    int i,j;
+    for(i=0; i<real_tx_channel_count; ++i) {
         ptr = ring_node_info_table + i*tx_ring_node_count;
         ptr->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &ptr->dma_addr);
         if(unlikely(!ptr->virtual_addr)) {
@@ -46,7 +47,7 @@ int ring_init(void)
         channel_info[i].tx_ring_empty = ptr;
         channel_info[i].tx_ring_full = ptr;
     }
-    for(int i=0; i< real_rx_channel_count; ++i) {
+    for(i=0; i< real_rx_channel_count; ++i) {
         ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count +i;
         ptr->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &ptr->dma_addr);
         if(unlikely(!ptr->virtual_addr)) {
@@ -71,10 +72,17 @@ int ring_init(void)
     }
     return 0;
 
-err_out:
-    dma_pool_destroy(pool);
-    devm_kfree(&netdev->dev,ring_node_info_table);
-    return -1;
+rx_err_out:
+
+tx_err_out:
+    for()
+    dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t dma)
+
+
+
+
+
+    return -ENOMEM;
 }
 //void dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t dma)
 
@@ -98,11 +106,11 @@ int rx_ring_dma_init(void)
             }
             //skb_reserve(skb, 2);
             //skb_record_rx_queue(skb,channelIndex);
-            dma_addr_t dma_addr = dma_map_single(&netdev->dev,
+            dma_addr_t dma_addr = dma_map_single(&pdev->dev,
                                                  liner_buffer + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
                                                  MAX_RECV_LEN,
                                                  DMA_TO_DEVICE);
-            if (unlikely(dma_mapping_error(&netdev->dev, dma_addr))) {
+            if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
                 pr_err("dma_map_single dma_dst_addr failed");
                 skb_free_frag(liner_buffer);  //page_frag_free
                 goto err_clean_previous;
@@ -123,7 +131,7 @@ err_clean_previous:
             deinit_start != init_start;
             deinit_start = deinit_start->next)
         {
-            dma_unmap_single(&netdev->dev,
+            dma_unmap_single(&pdev->dev,
                              deinit_start->virtual_addr->base,
                              deinit_start->virtual_addr->len,
                              DMA_FROM_DEVICE);
@@ -137,7 +145,6 @@ err_clean_previous:
 //  \--CPU1    ? 
 int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 {
-
     int err;
 
 /* Create and map scatterlist.
@@ -148,7 +155,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     unsigned int num_dma_bufs,i;
     int num_sg;
     unsigned int frag_count = skb_shinfo(skb)->nr_frags + 1;
-    scl = devm_kmalloc_array(&netdev->dev,frag_count, sizeof(struct scatterlist), GFP_KERNEL);
+    scl = devm_kmalloc_array(&pdev->dev,frag_count, sizeof(struct scatterlist), GFP_KERNEL);
     if (unlikely(!scl))
       	return -ENOMEM;
     sg_init_table(scl, frag_count);
@@ -158,7 +165,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     	goto dma_map_sg_failed;
     }
     //num_dma_bufs <= num_sg
-    num_dma_bufs = dma_map_sg(&netdev->dev, scl, num_sg, DMA_TO_DEVICE);
+    num_dma_bufs = dma_map_sg(&pdev->dev, scl, num_sg, DMA_TO_DEVICE);
     if (unlikely(num_dma_bufs==0)) {
     	err = -ENOMEM;
     	goto dma_map_sg_failed;
@@ -176,8 +183,8 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     }
     if(nodes_need) {
         //pr_err("it dose not have enough node to fill head and frags,wait for send previous node\n");
+        err = -EBUSY;
         goto dma_unmap;
-        return -1;
     }
 
     //start fill content
@@ -224,10 +231,12 @@ void ring_deinit()
     int channelIndex;
     struct ring_node_info * deinit_start;
     struct ring_node_info * deinit_end;
+    struct dma_page *page,*tmp;
+
     for(channelIndex=0; channelIndex<real_rx_channel_count; ++channelIndex) {
         deinit_start = deinit_end =  channel_info[channelIndex].rx_ring;
         do{
-            dma_unmap_single(&netdev->dev,
+            dma_unmap_single(&pdev->dev,
                              deinit_start->virtual_addr->base,
                              deinit_start->virtual_addr->len,
                              DMA_FROM_DEVICE);
@@ -247,6 +256,10 @@ void ring_deinit()
             deinit_start = deinit_start->next;
         }
     }
-    dma_pool_destroy(pool);
-    devm_kfree(&netdev->dev,ring_node_info_table);
+
+    list_for_each_entry_safe(page, tmp, &pool->page_list, page_list) {
+        pool_free_page(pool, page);
+    }
+    dmam_pool_destroy(&pdev->dev,pool);
+    devm_kfree(&pdev->dev,ring_node_info_table);
 }

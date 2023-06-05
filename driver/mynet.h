@@ -159,7 +159,8 @@ extern int rx_ring_node_count;
 extern struct RegCommon * reg_base_common;
 extern struct dma_pool * pool;
 extern struct ring_node_info *ring_node_info_table;
-extern struct net_device * netdev; 
+extern struct net_device * netdev;
+struct platform_device *pdev;
 //channel data
 extern struct channel_data channel_info[MAX_CHANNEL_NUM];
 
