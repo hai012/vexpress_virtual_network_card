@@ -38,7 +38,7 @@ TSO/UFO/GRO is related to NETIF_F_FRAGLIST and NETIF_F_SG
 #include <linux/netdevice.h>
 #include <linux/spinlock_types.h>
 #include <linux/dmapool.h>
-
+#include <linux/platform_device.h> 
 
 //NET_SKB_PAD
 //NET_IP_ALIGN  0 or 2
@@ -157,10 +157,8 @@ extern int tx_ring_node_count;
 extern int rx_ring_node_count; 
 //common data
 extern struct RegCommon * reg_base_common;
-extern struct dma_pool * pool;
-extern struct ring_node_info *ring_node_info_table;
 extern struct net_device * netdev;
-struct platform_device *pdev;
+extern struct platform_device *pdev;
 //channel data
 extern struct channel_data channel_info[MAX_CHANNEL_NUM];
 

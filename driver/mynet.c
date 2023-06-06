@@ -50,8 +50,6 @@ int tx_ring_node_count;
 int rx_ring_node_count;
 //common data
 struct RegCommon * reg_base_common;
-struct dma_pool * pool;
-struct ring_node_info *ring_node_info_table;
 struct net_device * netdev;
 struct platform_device *pdev;
 //channel data
@@ -160,8 +158,8 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
         }
         if(is_node_transfer(channel->tx_ring_full)) {
             //now , we find the last frag
-            dma_unmap_sg(&netdev->dev, channel->tx_ring_full->scl, channel->tx_ring_full->num_sg, DMA_FROM_DEVICE);
-            devm_kfree(&netdev->dev,channel->tx_ring_full->scl);
+            dma_unmap_sg(&pdev->dev, channel->tx_ring_full->scl, channel->tx_ring_full->num_sg, DMA_FROM_DEVICE);
+            devm_kfree(&pdev->dev,channel->tx_ring_full->scl);
             kfree_skb(channel->tx_ring_full->skb);
             ++count;
             format_error=0;
@@ -202,16 +200,16 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 pr_err("napi_alloc_frag failed");
                 return count;
             }
-            dma_addr_t dma_addr = dma_map_single(&netdev->dev,
+            dma_addr_t dma_addr = dma_map_single(&pdev->dev,
                                                  linear_buffer_replace + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
                                                  MAX_RECV_LEN,
                                                  DMA_TO_DEVICE);
-            if (unlikely(dma_mapping_error(&netdev->dev, dma_addr))) {
+            if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
                 pr_err("dma_map_single  failed");
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
                 return count;
             }
-            dma_unmap_single(&netdev->dev,
+            dma_unmap_single(&pdev->dev,
                             channel->rx_ring->virtual_addr->base,
                             channel->rx_ring->virtual_addr->len,
                             DMA_FROM_DEVICE);

@@ -6,29 +6,28 @@
 #include <linux/dmapool.h>
 #include "mynet.h"
 
-
+static struct dma_pool * pool;
+static struct ring_node_info *ring_node_info_table;
 
 
 int ring_init(void)
 {
-    size_t node_count = (1+real_tx_channel_count) * tx_ring_node_count +
-                        (1+real_rx_channel_count) * rx_ring_node_count;
+    size_t node_count = real_tx_channel_count * tx_ring_node_count +
+                        real_rx_channel_count * rx_ring_node_count;
     ring_node_info_table = devm_kcalloc(&pdev->dev,node_count,sizeof(struct ring_node_info),GFP_KERNEL);
     if(unlikely(!ring_node_info_table)) {
         pr_err("%s:alloc  ring_node_info_table failed",__func__);
-        return -1;
+        return -ENOMEM;
     }
     pool = dmam_pool_create(pdev->name,&pdev->dev, sizeof(struct ring_node_t),4,0);
     if(unlikely(!pool)) {
         pr_err("%s:dma_pool_create failed",__func__);
-        devm_kfree(&pdev->dev,ring_node_info_table);
-        return -1;
+        kfree(ring_node_info_table);
+        return -ENOMEM;
     }
 
-
     struct ring_node_info *ptr;
-    int i,j;
-    for(i=0; i<real_tx_channel_count; ++i) {
+    for(int i=0; i<real_tx_channel_count; ++i) {
         ptr = ring_node_info_table + i*tx_ring_node_count;
         ptr->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &ptr->dma_addr);
         if(unlikely(!ptr->virtual_addr)) {
@@ -47,7 +46,7 @@ int ring_init(void)
         channel_info[i].tx_ring_empty = ptr;
         channel_info[i].tx_ring_full = ptr;
     }
-    for(i=0; i< real_rx_channel_count; ++i) {
+    for(int i=0; i< real_rx_channel_count; ++i) {
         ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count +i;
         ptr->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &ptr->dma_addr);
         if(unlikely(!ptr->virtual_addr)) {
@@ -72,16 +71,16 @@ int ring_init(void)
     }
     return 0;
 
-rx_err_out:
-
-tx_err_out:
-    for()
-    dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t dma)
-
-
-
-
-
+err_out:
+    for(size_t index=0; index<node_count; ++index) {
+        struct ring_node_info *node = ring_node_info_table + index;
+        if(node->virtual_addr)
+            dma_pool_free(pool, node->virtual_addr, node->dma_addr);
+        else
+            break;
+    }
+    dmam_pool_destroy(pool);
+    devm_kfree(&pdev->dev,ring_node_info_table);
     return -ENOMEM;
 }
 //void dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t dma)
@@ -219,9 +218,9 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 
 dma_unmap:
     spin_unlock(&channel->spinlock_tx_ring_empty);
-	dma_unmap_sg(&netdev->dev, scl, num_sg, DMA_TO_DEVICE);
+	dma_unmap_sg(&pdev->dev, scl, num_sg, DMA_TO_DEVICE);
 dma_map_sg_failed:
-	devm_kfree(&netdev->dev,scl);
+	devm_kfree(&pdev->dev,scl);
 	return err;
 }
 
@@ -231,7 +230,6 @@ void ring_deinit()
     int channelIndex;
     struct ring_node_info * deinit_start;
     struct ring_node_info * deinit_end;
-    struct dma_page *page,*tmp;
 
     for(channelIndex=0; channelIndex<real_rx_channel_count; ++channelIndex) {
         deinit_start = deinit_end =  channel_info[channelIndex].rx_ring;
@@ -241,6 +239,7 @@ void ring_deinit()
                              deinit_start->virtual_addr->len,
                              DMA_FROM_DEVICE);
             skb_free_frag(deinit_start->linear_buffer);
+            dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
             deinit_start = deinit_start->next;
         }while(deinit_start != deinit_end);
 
@@ -249,17 +248,15 @@ void ring_deinit()
         while(deinit_start != deinit_end) {
             if(is_node_transfer(deinit_start)) {
                 //now , we find the last frag
-                dma_unmap_sg(&netdev->dev, deinit_start->scl, deinit_start->num_sg, DMA_FROM_DEVICE);
-                devm_kfree(&netdev->dev,deinit_start->scl);
+                dma_unmap_sg(&pdev->dev, deinit_start->scl, deinit_start->num_sg, DMA_FROM_DEVICE);
+                devm_kfree(&pdev->dev,deinit_start->scl);
                 kfree_skb(deinit_start->skb);
+                dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
             }
             deinit_start = deinit_start->next;
         }
     }
 
-    list_for_each_entry_safe(page, tmp, &pool->page_list, page_list) {
-        pool_free_page(pool, page);
-    }
-    dmam_pool_destroy(&pdev->dev,pool);
+    dmam_pool_destroy(pool);
     devm_kfree(&pdev->dev,ring_node_info_table);
 }
