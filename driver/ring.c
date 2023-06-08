@@ -98,7 +98,8 @@ int rx_ring_dma_init(void)
         init_end=channel_info[channelIndex].rx_ring;
         do
         {
-            char *liner_buffer = netdev_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
+            struct napi_alloc_cache *nc = per_cpu_ptr(&napi_alloc_cache, channelIndex);
+            char *liner_buffer = page_frag_alloc_align(&nc->page, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
             if(unlikely(!liner_buffer)) {
                 pr_err("netdev_alloc_frag failed");
                 goto err_clean_previous;
