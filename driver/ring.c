@@ -86,6 +86,18 @@ err_out:
 //void dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t dma)
 
 
+/*
+
+get_online_cpus()
+for_each_online_cpu(cpuid){
+
+}
+put_online_cpus()
+
+*/
+
+
+
 
 int rx_ring_dma_init(void)
 {
@@ -104,8 +116,6 @@ int rx_ring_dma_init(void)
                 pr_err("netdev_alloc_frag failed");
                 goto err_clean_previous;
             }
-            //skb_reserve(skb, 2);
-            //skb_record_rx_queue(skb,channelIndex);
             dma_addr_t dma_addr = dma_map_single(&pdev->dev,
                                                  liner_buffer + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
                                                  MAX_RECV_LEN,
@@ -115,6 +125,8 @@ int rx_ring_dma_init(void)
                 skb_free_frag(liner_buffer);  //page_frag_free
                 goto err_clean_previous;
             }
+
+            
             init_start->linear_buffer = liner_buffer;
             writel_relaxed(dma_addr,                        &init_start->virtual_addr->base);
             writel_relaxed(MAX_RECV_LEN,                    &init_start->virtual_addr->len);

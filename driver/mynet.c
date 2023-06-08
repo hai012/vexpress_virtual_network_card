@@ -230,6 +230,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             }
             skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
             skb_record_rx_queue(skb,channel->queue_index);
+            //skb_mark_for_recycle(skb); see page_pool
             napi_gro_receive(napi,skb);
             ++count;
             format_error = 0;
