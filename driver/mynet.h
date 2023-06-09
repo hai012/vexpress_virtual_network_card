@@ -11,6 +11,11 @@ kzalloc   kcalloc
 drivers/net/ethernet/freescale/dpaa2/dpaa2-eth.c  dpaa2_eth_build_sg_fd
 include/linux/netdev_features.h
 
+
+
+
+
+
 barrier()
 writel
 SO_REUSEPORT  SO_REUSEADDR
@@ -39,7 +44,7 @@ TSO/UFO/GRO is related to NETIF_F_FRAGLIST and NETIF_F_SG
 #include <linux/spinlock_types.h>
 #include <linux/dmapool.h>
 #include <linux/platform_device.h> 
-
+#include <linux/gfp.h>
 //NET_SKB_PAD
 //NET_IP_ALIGN  0 or 2
 //ETH_HLEN 14,dest mac /src mac type
@@ -141,11 +146,11 @@ struct channel_data {
     //if tx_ring_full!=tx_ring_empty, then tx_ring_full point to a full node
     struct ring_node_info *tx_ring_empty;
     struct ring_node_info *tx_ring_full;
-    spinlock_t spinlock_tx_ring_empty;
-    spinlock_t spinlock_tx_ring_full;
+    //spinlock_t spinlock_tx_ring_empty;
+    //spinlock_t spinlock_tx_ring_full;
 
     struct ring_node_info *rx_ring;
-
+    struct page_frag_cache page_cache;
 };
 
 //config data

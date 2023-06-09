@@ -25,6 +25,32 @@
 
 
 
+adrv9010_DmaMemRead(device, ADRV9010_ADDR_DPD_TX_CAPTURE_DATA, captureBuffer, extDpdCaptureData->txCaptureData.extDpdCaptureSampleArrSize*4, 0);
+write_to_file(call_times,
+┊   ┊   ┊   ┊ "TX_CAPTURE",
+┊   ┊   ┊   ┊captureBuffer,
+┊   ┊   ┊   extDpdCaptureData->txCaptureData.extDpdCaptureSampleArrSize*4);
+adrv9010_ExtDpdCaptureDataParse(device,captureBuffer, &extDpdCaptureData->txCaptureData.extDpdCaptureDataI[0], &extDpdCaptureData->txCaptureData.extDpdCaptureDtaQ[0], extDpdCaptureData->txCaptureData.extDpdCaptureSampleArrSize);
+
+
+
+
+adrv9010_DmaMemRead(device, ADRV9010_ADDR_DPD_ALT_TX_CAPTURE_DATA, captureBuffer, extDpdCaptureData->txAlternateCaptureData.extDpdCaptureSampleArrSize*4, 0);
+write_to_file(call_times,
+┊   ┊   ┊   ┊ "ALT_TX_CAPTURE",
+┊   ┊   ┊   ┊ captureBuffer,
+┊   ┊   ┊   ┊ extDpdCaptureData->txAlternateCaptureData.extDpdCaptureSampleArrSize*4);
+adrv9010_ExtDpdCaptureDataParse(device, captureBuffer, &extDpdCaptureData->txAlternateCaptureData.extDpdCaptureDataI[0], &extDpdCaptureData->txAlternateCaptureData.extDpdCaptureDataQ[0], extDpdCaptureData->txAlternateCaptureData.extDpdCaptureSampleArrSize);
+
+
+adrv9010_DmaMemRead(device, ADRV9010_ADDR_DPD_ORX_CAPTURE_DATA, captureBuffer, extDpdCaptureData->orxCaptureData.extDpdCaptureSampleArrSize*4, 0);
+write_to_file(call_times,
+┊   ┊   ┊   ┊ "ORX_CAPTURE",
+┊   ┊   ┊   ┊ captureBuffer,
+┊   ┊   ┊   ┊ extDpdCaptureData->orxCaptureData.extDpdCaptureSampleArrSize);
+adrv9010_ExtDpdCaptureDataParse(device, captureBuffer, &extDpdCaptureData->orxCaptureData.extDpdCaptureDataI[0], &extDpdCaptureData->orxCaptureData.extDpdCaptureDataQ[0], extDpdCaptureData->orxCaptureData.extDpdCaptureSampleArrSize);
+
+
 static int param_real_tx_channel_count = 4;
 module_param(param_real_tx_channel_count, int, 0644);
 static int param_real_rx_channel_count = 4;
@@ -34,9 +60,9 @@ module_param(param_real_rx_channel_count, int, 0644);
 //static int param_watchdog_timeo = 5;/* In jiffies */
 //module_param(param_watchdog_timeo, int, 0);
 
-static int param_tx_ring_node_count = 100;
+static int param_tx_ring_node_count = 64;
 module_param(param_tx_ring_node_count, int, 0644);
-static int param_rx_ring_node_count = 100;
+static int param_rx_ring_node_count = 64;
 module_param(param_rx_ring_node_count, int, 0644);
 
 
@@ -168,7 +194,7 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
         }
         channel->tx_ring_full = channel->tx_ring_full->next;
     }
-    spin_unlock(&channel->spinlock_tx_ring_full);
+    //spin_unlock(&channel->spinlock_tx_ring_full);
 
     BUG_ON(format_error);//unknown error,tx ring data was damaged
 
@@ -195,7 +221,8 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             }
 
             //replace
-            char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
+            //char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
+            char *linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
             if(unlikely(!linear_buffer_replace)) {
                 pr_err("napi_alloc_frag failed");
                 return count;
@@ -304,11 +331,11 @@ static int mynet_probe(struct platform_device *dev)
         channel_info[i].rx_irqs = irq;
     }
 
-    for(int i=0; i<MAX_CHANNEL_NUM;++i) {
+    /*for(int i=0; i<MAX_CHANNEL_NUM;++i) {
         spin_lock_init(&channel_info[i].spinlock_tx_ring_empty);
         spin_lock_init(&channel_info[i].spinlock_tx_ring_full);
         channel_info[i].queue_index = i;
-    }
+    }*/
 
     //param check
     real_tx_channel_count = param_real_tx_channel_count;

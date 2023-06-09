@@ -4,6 +4,8 @@
 #include <linux/netdevice.h>
 #include <linux/spinlock_types.h>
 #include <linux/dmapool.h>
+#include <linux/gfp.h>
+
 #include "mynet.h"
 
 static struct dma_pool * pool;
@@ -29,17 +31,15 @@ int ring_init(void)
     struct ring_node_info *ptr;
     for(int i=0; i<real_tx_channel_count; ++i) {
         ptr = ring_node_info_table + i*tx_ring_node_count;
-        ptr->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &ptr->dma_addr);
-        if(unlikely(!ptr->virtual_addr)) {
-            goto err_out;
-        }
-        for(int j=1; j< tx_ring_node_count; ++j) {
-            (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &(ptr+j)->dma_addr);
+        for(int j=0; j< tx_ring_node_count; ++j) {
+            (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &(ptr+j->dma_addr);
             if(unlikely(!(ptr+j)->virtual_addr)) {
                 goto err_out;
             }
-            (ptr+j-1)->next = (ptr+j);
-            (ptr+j-1)->virtual_addr->next = (ptr+j)->dma_addr;
+        }
+        for(int j=0; j<tx_ring_node_count-2; ++j) {
+            (ptr+j)->next = (ptr+j+1);
+            (ptr+j)->virtual_addr->next = (ptr+j+1)->dma_addr;
         }
         (ptr+tx_ring_node_count-1)->next = ptr;
         (ptr+tx_ring_node_count-1)->virtual_addr->next = ptr->dma_addr;
@@ -110,8 +110,8 @@ int rx_ring_dma_init(void)
         init_end=channel_info[channelIndex].rx_ring;
         do
         {
-            struct napi_alloc_cache *nc = per_cpu_ptr(&napi_alloc_cache, channelIndex);
-            char *liner_buffer = page_frag_alloc_align(&nc->page, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
+            pr_err("channelIndex=%d,MAX_RX_SKB_LINEAR_BUFF_LEN=%d\n",channelIndex,MAX_RX_SKB_LINEAR_BUFF_LEN);
+            char *liner_buffer = page_frag_alloc_align(&channel_info[channelIndex].page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
             if(unlikely(!liner_buffer)) {
                 pr_err("netdev_alloc_frag failed");
                 goto err_clean_previous;
@@ -185,7 +185,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 
 
     //check if it has enough node to fill
-    spin_lock(&channel->spinlock_tx_ring_empty);
+    //spin_lock(&channel->spinlock_tx_ring_empty);
     unsigned int nodes_need = num_dma_bufs;
     for(struct ring_node_info *node=channel->tx_ring_empty;
         node->next != channel->tx_ring_full;
@@ -225,7 +225,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     }
 
     channel->tx_ring_empty = fill;
-    spin_unlock(&channel->spinlock_tx_ring_empty);
+    //spin_unlock(&channel->spinlock_tx_ring_empty);
 
     return 0;
 
