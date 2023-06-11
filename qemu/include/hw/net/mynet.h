@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "exec/hwaddr.h"
 #include "qemu/typedefs.h"
-void mynet_init(hwaddr base,qemu_irq * irq);
+void mynet_init(hwaddr base,qemu_irq * pic);
 
 
 

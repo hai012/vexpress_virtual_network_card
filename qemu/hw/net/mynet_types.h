@@ -87,13 +87,7 @@ struct ring_node_t {
 };
 
 
-static inline void *guest_to_host(hwaddr guest_phy_addr)
-{
-    MemoryRegionSection mem_section = memory_region_find(get_system_memory(), guest_phy_addr, 0);
-    if(!mem_section.mr)
-        return NULL;
-    return memory_region_get_ram_ptr(mem_section.mr) + mem_section.offset_within_region;
-}
+
 
 
 struct MynetStateChannel {
@@ -106,17 +100,16 @@ struct MynetStateChannel {
 
     int tap_fd;
 
-    struct ring_node_t * tx_node_host;
+
     pthread_t thread_tx;
     pthread_mutex_t mutex_tx;
     pthread_cond_t cond_tx;
 
 
-    struct ring_node_t * rx_node_host;
     pthread_t thread_rx;
     pthread_mutex_t mutex_rx;
     pthread_cond_t cond_rx;
-
+    int num;
     struct RegChannel reg;
 };
 
@@ -126,4 +119,40 @@ typedef struct ring_node_t ring_node_t;
 typedef struct RegChannel RegChannel;
 typedef struct MynetState MynetState;
 typedef struct RegCommon RegCommon;
+
+
+
+#include <exec/address-spaces.h>
+
+
+MemTxResult inline read_guest_phy_addr(hwaddr addr,void *buf, hwaddr len)
+{
+    return address_space_read_full(&address_space_memory, addr, MEMTXATTRS_UNSPECIFIED, buf, len);
+}
+MemTxResult inline write_guest_phy_addr(hwaddr addr,void *buf, hwaddr len)
+{
+    return address_space_write(&address_space_memory, addr, MEMTXATTRS_UNSPECIFIED, buf, len);
+}
+
+
+
+/*
+3123  void *cpu_physical_memory_map(hwaddr addr,
+3124                                hwaddr *plen,
+3125                                bool is_write)
+
+3131  void cpu_physical_memory_unmap(void *buffer, hwaddr len,
+3132                                 bool is_write, hwaddr access_len)
+
+2808  void cpu_physical_memory_rw(hwaddr addr, void *buf,
+2809                              hwaddr len, bool is_write)
+*/
+
+
+
+
+
+
+
+
 #endif

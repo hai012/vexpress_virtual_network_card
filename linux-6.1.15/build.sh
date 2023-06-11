@@ -24,10 +24,10 @@
 
 #cp vexpress_board_defconfig ../out/kernel/.config
 cp vexpress_board_debug_defconfig ../out/kernel/.config
-make -j16 KBUILD_OUTPUT=../out/kernel zImage
-make -j16 KBUILD_OUTPUT=../out/kernel modules
-make -j16 KBUILD_OUTPUT=../out/kernel vexpress-v2p-ca9.dtb
-make -j16 KBUILD_OUTPUT=../out/kernel vexpress-v2p-ca15-tc1.dtb
+make -j16 V=1 KBUILD_OUTPUT=../out/kernel KCFLAGS=-fdwarf2-cfi-asm  zImage
+make -j16 V=1 KBUILD_OUTPUT=../out/kernel KCFLAGS=-fdwarf2-cfi-asm  modules
+make -j16 V=1 KBUILD_OUTPUT=../out/kernel KCFLAGS=-fdwarf2-cfi-asm  vexpress-v2p-ca9.dtb
+make -j16 V=1 KBUILD_OUTPUT=../out/kernel KCFLAGS=-fdwarf2-cfi-asm  vexpress-v2p-ca15-tc1.dtb
 
 
 echo "

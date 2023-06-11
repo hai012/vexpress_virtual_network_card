@@ -32,12 +32,12 @@ int ring_init(void)
     for(int i=0; i<real_tx_channel_count; ++i) {
         ptr = ring_node_info_table + i*tx_ring_node_count;
         for(int j=0; j< tx_ring_node_count; ++j) {
-            (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &(ptr+j->dma_addr);
+            (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &(ptr+j)->dma_addr);
             if(unlikely(!(ptr+j)->virtual_addr)) {
                 goto err_out;
             }
         }
-        for(int j=0; j<tx_ring_node_count-2; ++j) {
+        for(int j=0; j<tx_ring_node_count-1; ++j) {
             (ptr+j)->next = (ptr+j+1);
             (ptr+j)->virtual_addr->next = (ptr+j+1)->dma_addr;
         }
@@ -47,18 +47,16 @@ int ring_init(void)
         channel_info[i].tx_ring_full = ptr;
     }
     for(int i=0; i< real_rx_channel_count; ++i) {
-        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count +i;
-        ptr->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &ptr->dma_addr);
-        if(unlikely(!ptr->virtual_addr)) {
-            goto err_out;
-        }
-        for(int j=1; j< rx_ring_node_count; ++j) {
+        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count;
+        for(int j=0; j< rx_ring_node_count; ++j) {
             (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &(ptr+j)->dma_addr);
             if(unlikely(!(ptr+j)->virtual_addr)) {
                 goto err_out;
             }
-            (ptr+j-1)->next = (ptr+j);
-            (ptr+j-1)->virtual_addr->next = (ptr+j)->dma_addr;
+        }
+        for(int j=0; j<rx_ring_node_count-1; ++j) {
+            (ptr+j)->next = (ptr+j+1);
+            (ptr+j)->virtual_addr->next = (ptr+j+1)->dma_addr;
         }
         (ptr+rx_ring_node_count-1)->next = ptr;
         (ptr+rx_ring_node_count-1)->virtual_addr->next = ptr->dma_addr;
@@ -110,7 +108,7 @@ int rx_ring_dma_init(void)
         init_end=channel_info[channelIndex].rx_ring;
         do
         {
-            pr_err("channelIndex=%d,MAX_RX_SKB_LINEAR_BUFF_LEN=%d\n",channelIndex,MAX_RX_SKB_LINEAR_BUFF_LEN);
+            //pr_err("channelIndex=%d,MAX_RX_SKB_LINEAR_BUFF_LEN=%d\n",channelIndex,MAX_RX_SKB_LINEAR_BUFF_LEN);
             char *liner_buffer = page_frag_alloc_align(&channel_info[channelIndex].page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
             if(unlikely(!liner_buffer)) {
                 pr_err("netdev_alloc_frag failed");
@@ -230,7 +228,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     return 0;
 
 dma_unmap:
-    spin_unlock(&channel->spinlock_tx_ring_empty);
+    //spin_unlock(&channel->spinlock_tx_ring_empty);
 	dma_unmap_sg(&pdev->dev, scl, num_sg, DMA_TO_DEVICE);
 dma_map_sg_failed:
 	devm_kfree(&pdev->dev,scl);

@@ -6,13 +6,18 @@ irqreturn_t irq_handler_tx(int irq, void *data)
 {
     struct channel_data * channel = (struct channel_data *)data;
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
+    printk("MYNET:tx_hw_irq,flag:0x%04x\n",flag);
     if(likely(flag & IRQF_TX_SEND)) {
         //mask IRQF_TX_SEND;
         //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
         //mask &= ~IRQF_TX_SEND;
         writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);
 
-        napi_schedule(& channel->napi_tx);
+        if (likely(napi_schedule_prep(&channel->napi_tx))) {
+            printk("MYNET:tx_hw_irq,prep\n",flag);
+            __napi_schedule(&channel->napi_tx);
+            writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);//mask IRQF_TX_SEND;
+        }
 
         flag &= ~IRQF_TX_SEND;//clear
     }
@@ -34,12 +39,16 @@ irqreturn_t irq_handler_rx(int irq, void *data)
 {
     struct channel_data * channel = (struct channel_data *)data;
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->rx_irq_flag);
+    printk("MYNET:rx_hw_irq,flag:0x%04x\n",flag);
     if(flag & IRQF_RX_RECV) {
         //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
         //mask &= ~IRQF_RX_RECV;
-        writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);//mask IRQF_RX_RECV;
 
-        napi_schedule(& channel->napi_rx);
+        if (likely(napi_schedule_prep(&channel->napi_rx))) {
+            printk("MYNET:rx_hw_irq,prep\n",flag);
+            __napi_schedule(&channel->napi_rx);
+            writel_relaxed(0, &channel->reg_base_channel->rx_irq_mask);//mask IRQF_RX_RECV;
+        }
 
         flag &= ~IRQF_RX_RECV;//clear irq flag
     }
@@ -51,6 +60,7 @@ irqreturn_t irq_handler_rx(int irq, void *data)
 
         flag &= ~IRQF_RX_ERR;//clear irq flag
     }*/
+    //printk("MYNET:rxirq:w:0x%04x\n",flag);
     BUG_ON(flag & IRQF_RX_ERR);
     writel(flag, &channel->reg_base_channel->rx_irq_flag);
     return IRQ_HANDLED;
@@ -67,7 +77,7 @@ int register_irq(void)
                     &channel_info[i])) {//dev_id
             pr_err("%s: fail to request %s\n",__func__,name_buffer);
             while( --i >= 0 ) {
-                free_irq(channel_info[i].rx_irqs, &channel_info[i]);
+                devm_free_irq(&pdev->dev,channel_info[i].rx_irqs, &channel_info[i]);
             }
             return -1;
         }

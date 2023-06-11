@@ -19,7 +19,7 @@ include/linux/netdev_features.h
 barrier()
 writel
 SO_REUSEPORT  SO_REUSEADDR
-
+http://127.0.0.1:8080/source/xref/linux-6.1.15/drivers/net/ethernet/mediatek/mtk_eth_soc.c#mtk_tx_map
 http://127.0.0.1:8088/source/xref/kernel_android13/drivers/net/ethernet/mediatek/mtk_eth_soc.c#mtk_tx_map
 http://127.0.0.1:8088/source/xref/kernel_android13/drivers/net/ethernet/freescale/dpaa2/dpaa2-eth.c#797
 
@@ -150,7 +150,13 @@ struct channel_data {
     //spinlock_t spinlock_tx_ring_full;
 
     struct ring_node_info *rx_ring;
+    //int is_rx_ring_full;
+    //int is_tx_ring_empty;
     struct page_frag_cache page_cache;
+    unsigned long long tx_packets;
+    unsigned long long tx_bytes;
+    unsigned long long rx_packets;
+    unsigned long long rx_bytes;
 };
 
 //config data
@@ -171,11 +177,11 @@ extern struct channel_data channel_info[MAX_CHANNEL_NUM];
 
 static int inline is_node_belong_to_hw(struct ring_node_info *node)
 {
-    return readl_relaxed(&node->virtual_addr->flag) & NODE_F_BELONG;
+    return NODE_F_BELONG & readl_relaxed(&node->virtual_addr->flag);
 }
 static int inline is_node_transfer(struct ring_node_info *node)
 {
-    return readl_relaxed(&node->virtual_addr->flag) & NODE_F_TRANSFER;
+    return NODE_F_TRANSFER & readl_relaxed(&node->virtual_addr->flag);
 }
 
 

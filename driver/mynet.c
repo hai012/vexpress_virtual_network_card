@@ -25,32 +25,6 @@
 
 
 
-adrv9010_DmaMemRead(device, ADRV9010_ADDR_DPD_TX_CAPTURE_DATA, captureBuffer, extDpdCaptureData->txCaptureData.extDpdCaptureSampleArrSize*4, 0);
-write_to_file(call_times,
-┊   ┊   ┊   ┊ "TX_CAPTURE",
-┊   ┊   ┊   ┊captureBuffer,
-┊   ┊   ┊   extDpdCaptureData->txCaptureData.extDpdCaptureSampleArrSize*4);
-adrv9010_ExtDpdCaptureDataParse(device,captureBuffer, &extDpdCaptureData->txCaptureData.extDpdCaptureDataI[0], &extDpdCaptureData->txCaptureData.extDpdCaptureDtaQ[0], extDpdCaptureData->txCaptureData.extDpdCaptureSampleArrSize);
-
-
-
-
-adrv9010_DmaMemRead(device, ADRV9010_ADDR_DPD_ALT_TX_CAPTURE_DATA, captureBuffer, extDpdCaptureData->txAlternateCaptureData.extDpdCaptureSampleArrSize*4, 0);
-write_to_file(call_times,
-┊   ┊   ┊   ┊ "ALT_TX_CAPTURE",
-┊   ┊   ┊   ┊ captureBuffer,
-┊   ┊   ┊   ┊ extDpdCaptureData->txAlternateCaptureData.extDpdCaptureSampleArrSize*4);
-adrv9010_ExtDpdCaptureDataParse(device, captureBuffer, &extDpdCaptureData->txAlternateCaptureData.extDpdCaptureDataI[0], &extDpdCaptureData->txAlternateCaptureData.extDpdCaptureDataQ[0], extDpdCaptureData->txAlternateCaptureData.extDpdCaptureSampleArrSize);
-
-
-adrv9010_DmaMemRead(device, ADRV9010_ADDR_DPD_ORX_CAPTURE_DATA, captureBuffer, extDpdCaptureData->orxCaptureData.extDpdCaptureSampleArrSize*4, 0);
-write_to_file(call_times,
-┊   ┊   ┊   ┊ "ORX_CAPTURE",
-┊   ┊   ┊   ┊ captureBuffer,
-┊   ┊   ┊   ┊ extDpdCaptureData->orxCaptureData.extDpdCaptureSampleArrSize);
-adrv9010_ExtDpdCaptureDataParse(device, captureBuffer, &extDpdCaptureData->orxCaptureData.extDpdCaptureDataI[0], &extDpdCaptureData->orxCaptureData.extDpdCaptureDataQ[0], extDpdCaptureData->orxCaptureData.extDpdCaptureSampleArrSize);
-
-
 static int param_real_tx_channel_count = 4;
 module_param(param_real_tx_channel_count, int, 0644);
 static int param_real_rx_channel_count = 4;
@@ -99,27 +73,46 @@ int	mynet_open(struct net_device *netdev)
         writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_mask  );
     }
 
-    if(register_irq()) {
-        return -1;
-    }
-
 
     if(ring_init()){
         return -1;
     }
 
-    //hw_start_real_channel
     for(int i=0; i < real_tx_channel_count; ++i) {
-        writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
-        writel_relaxed(0,                                         &channel_info[i].reg_base_channel->tx_irq_flag);
-        writel_relaxed(IRQF_TX_SEND,                               &channel_info[i].reg_base_channel->tx_irq_mask);//unmask IRQF_TX_SEND
-        writel(1,                                                 &channel_info[i].reg_base_channel->tx_ctl_status);//start
+        napi_enable(&channel_info[i].napi_tx);
     }
     for(int i=0; i < real_rx_channel_count; ++i) {
+        napi_enable(&channel_info[i].napi_rx);
+    }
+
+    if(register_irq()) {
+        return -1;
+    }
+
+    //pr_err("hw_start_real_channel\n");
+    //hw_start_real_channel
+
+    for(int i=0; i < real_rx_channel_count; ++i) {
+        pr_err("rx channel:%d set base",i);
         writel_relaxed(channel_info[i].rx_ring->dma_addr,    &channel_info[i].reg_base_channel->rx_ring_base);//set base
+        pr_err("rx channel:%d set irq_flag",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->rx_irq_flag);
+        pr_err("rx channel:%d set irq_mask",i);
         writel_relaxed(IRQF_RX_RECV,                                &channel_info[i].reg_base_channel->rx_irq_mask);//unmask IRQF_RX_RECV
+        pr_err("rx channel:%d set ctl_status",i);
         writel(1,                                                 &channel_info[i].reg_base_channel->rx_ctl_status);//start
+    }
+    
+
+    for(int i=0; i < real_tx_channel_count; ++i) {
+        pr_err("tx channel:%d set base",i);
+        writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
+        pr_err("tx channel:%d set irq_flag",i);
+        writel_relaxed(0,                                         &channel_info[i].reg_base_channel->tx_irq_flag);
+        pr_err("tx channel:%d set irq_mask",i);
+        writel_relaxed(IRQF_TX_SEND,                               &channel_info[i].reg_base_channel->tx_irq_mask);//unmask IRQF_TX_SEND
+        pr_err("tx channel:%d set ctl_status",i);
+        writel(1,                                                 &channel_info[i].reg_base_channel->tx_ctl_status);//start
     }
 
     netif_tx_start_all_queues(netdev);
@@ -128,6 +121,12 @@ int	mynet_open(struct net_device *netdev)
 int	mynet_stop(struct net_device *netdev)
 {
     netif_tx_stop_all_queues(netdev);
+    for(int i=0; i < real_tx_channel_count; ++i) {
+        napi_disable(&channel_info[i].napi_tx);
+    }
+    for(int i=0; i < real_rx_channel_count; ++i) {
+        napi_disable(&channel_info[i].napi_rx);
+    }
     ring_deinit();
     unregister_irq();
     //hw_deinit(netdev);
@@ -167,27 +166,29 @@ static const struct net_device_ops mynet_netdev_ops = {
 static int mynet_poll_tx(struct napi_struct *napi, int budget)
 {
     struct channel_data * channel = container_of(napi, struct channel_data, napi_tx);
-    int count=0;
+    int done=0,bytes = 0;
     int format_error = 1;
-
+    pr_err("MYNET:mynet_poll_tx:channel=%p\n",channel);
     //spin_lock(&channel->spinlock_tx_ring_full);
-    while(budget > count) {
+    while(budget > done) {
         if(is_node_belong_to_hw(channel->tx_ring_full)) {
-            //now ,we don't have skb to release
-            //there is data in tx ting,wait hw send data
+            //pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
+            //      "there is data in tx ting, but wait for hw send data\n");
             break;
         }
         if(channel->tx_ring_full==channel->tx_ring_empty) {
-            //now ,we don't have skb to release
-            //there is no data in tx ting
+            //pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
+            //        "there is no data in tx ting");
             break;
         }
         if(is_node_transfer(channel->tx_ring_full)) {
-            //now , we find the last frag
+            pr_err("MYNET:mynet_poll_tx:find the last frag,and consume skb\n");
             dma_unmap_sg(&pdev->dev, channel->tx_ring_full->scl, channel->tx_ring_full->num_sg, DMA_FROM_DEVICE);
             devm_kfree(&pdev->dev,channel->tx_ring_full->scl);
-            kfree_skb(channel->tx_ring_full->skb);
-            ++count;
+            //kfree_skb(channel->tx_ring_full->skb);
+            bytes += channel->tx_ring_full->skb->len;
+            napi_consume_skb(channel->tx_ring_full->skb,budget);
+            ++done;
             format_error=0;
         } else {
             format_error=1;
@@ -198,6 +199,13 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
 
     BUG_ON(format_error);//unknown error,tx ring data was damaged
 
+
+    napi_complete_done(napi,done);
+
+    channel->tx_packets += done;
+    channel->tx_bytes += bytes;
+
+
     //wake up queue anyway
     netif_tx_wake_queue(netdev_get_tx_queue(netdev,channel->queue_index));
 
@@ -205,42 +213,49 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
     //mask |= IRQF_TX_SEND;
     writel_relaxed(IRQF_TX_SEND, &channel->reg_base_channel->tx_irq_mask);
-    return count;
+    return done;
 }
 static int mynet_poll_rx(struct napi_struct *napi, int budget)
 {
-    struct channel_data * channel = container_of(napi, struct channel_data, napi_tx);
-    int count=0;
+    struct channel_data * channel = container_of(napi, struct channel_data, napi_rx);
+    int done=0, bytes = 0;
     int format_error=1;
-    while(budget>count)
+    char *linear_buffer_replace;
+    char *linear_buffer_recv;
+    dma_addr_t dma_addr;
+    struct sk_buff * skb;
+
+    pr_err("MYNET:mynet_poll_rx:channel=%p\n",channel);
+    while(budget>done)
     {
         //if(is_node_transfer(channel->tx_ring_full)) {
             if(is_node_belong_to_hw(channel->rx_ring)) {
                 //now, there is no linear_buffer to receive
+                pr_err("MYNET:now, there is no linear_buffer to receive\n");
                 break;
             }
 
             //replace
             //char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
-            char *linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
+            linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
             if(unlikely(!linear_buffer_replace)) {
-                pr_err("napi_alloc_frag failed");
-                return count;
+                pr_err("MYNET:napi_alloc_frag failed\n");
+                return done;
             }
-            dma_addr_t dma_addr = dma_map_single(&pdev->dev,
-                                                 linear_buffer_replace + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
-                                                 MAX_RECV_LEN,
-                                                 DMA_TO_DEVICE);
+            dma_addr = dma_map_single(&pdev->dev,
+                                      linear_buffer_replace + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
+                                      MAX_RECV_LEN,
+                                      DMA_TO_DEVICE);
             if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
-                pr_err("dma_map_single  failed");
+                pr_err("MYNET:dma_map_single  failed\n");
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
-                return count;
+                return done;
             }
             dma_unmap_single(&pdev->dev,
                             channel->rx_ring->virtual_addr->base,
                             channel->rx_ring->virtual_addr->len,
                             DMA_FROM_DEVICE);
-            char * linear_buffer_recv = channel->rx_ring->linear_buffer;//
+            linear_buffer_recv = channel->rx_ring->linear_buffer;
 
             channel->rx_ring->linear_buffer = linear_buffer_replace;
             writel_relaxed(dma_addr,                        &channel->rx_ring->virtual_addr->base);
@@ -249,17 +264,26 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             channel->rx_ring = channel->rx_ring->next;
 
             //recv
-            struct sk_buff * skb = build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
+            skb = napi_build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
             if (unlikely(!skb)) {
+                pr_err("MYNET:build_skb fail\n");
                 skb_free_frag(linear_buffer_recv);
-                netdev->stats.rx_dropped++;
-                return count;
+                //netdev->stats.rx_dropped++;
+                return done;
             }
+            //skb_mark_for_recycle(skb); see page_pool
             skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
             skb_record_rx_queue(skb,channel->queue_index);
-            //skb_mark_for_recycle(skb); see page_pool
+            skb->dev = netdev;
+            skb->ip_summed = CHECKSUM_UNNECESSARY;
+            skb->protocol = eth_type_trans(skb, netdev);
+
+            bytes += skb->len;
+            ++done;
+            pr_err("MYNET:napi_gro_receive  skb\n");
+
             napi_gro_receive(napi,skb);
-            ++count;
+
             format_error = 0;
         //}
     }
@@ -267,26 +291,30 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
 
     BUG_ON(format_error);
 
+    napi_complete_done(napi,done);
+
+    channel->rx_packets += done;
+    channel->rx_bytes += bytes;
 
 
     //unmask IRQF_TX_IRQF_RX_RECVSEND
-    //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
+    //uini32_t mask = readl_relaxed(&channel->reg_base_channel->rx_irq_mask);
     //mask |= IRQF_RX_RECV;
-    writel_relaxed(IRQF_RX_RECV,  &channel->reg_base_channel->tx_irq_mask);
+    writel_relaxed(IRQF_RX_RECV,  &channel->reg_base_channel->rx_irq_mask);
 
 
-    //start rx anyway
+    //start rx anyway， no mater hw rx thread is run
     writel_relaxed(1,  &channel->reg_base_channel->rx_ctl_status);
 
-    return count;
+    return done;
 }
 
 static int mynet_probe(struct platform_device *dev)
 {
     int irq;
+    struct resource *res;
+
     pdev = dev;
-
-
     /*if(!dma_set_mask(&pdev->dev, DMA_BIT_MASK(32))) {
         pr_err("%s: dma_set_mask failed\n",__func__);
         return -1;
@@ -295,9 +323,8 @@ static int mynet_probe(struct platform_device *dev)
         pr_err("%s: dma_set_coherent_mask failed\n",__func__);
         return -1;
     }*/
-
     //parse dtb
-    struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+    res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
     if (!res) {
         pr_err("%s: fail to get RegCommon virtual base addr\n",__func__);
         return -ENODEV;
@@ -331,11 +358,15 @@ static int mynet_probe(struct platform_device *dev)
         channel_info[i].rx_irqs = irq;
     }
 
-    /*for(int i=0; i<MAX_CHANNEL_NUM;++i) {
-        spin_lock_init(&channel_info[i].spinlock_tx_ring_empty);
+    for(int i=0; i<MAX_CHANNEL_NUM;++i) {
+        /*spin_lock_init(&channel_info[i].spinlock_tx_ring_empty);
         spin_lock_init(&channel_info[i].spinlock_tx_ring_full);
-        channel_info[i].queue_index = i;
-    }*/
+        channel_info[i].queue_index = i;*/
+        channel_info[i].tx_packets = 0;
+        channel_info[i].tx_bytes = 0;
+        channel_info[i].rx_packets = 0;
+        channel_info[i].rx_bytes = 0;
+    }
 
     //param check
     real_tx_channel_count = param_real_tx_channel_count;
@@ -369,8 +400,8 @@ static int mynet_probe(struct platform_device *dev)
         netif_napi_add(netdev, &channel_info[i].napi_rx, mynet_poll_rx);
     }
     netdev->netdev_ops = &mynet_netdev_ops;
-	netdev->flags           |= IFF_NOARP;
-	netdev->features        |= NETIF_F_HW_CSUM;
+	//netdev->flags           |= ;
+	//netdev->features        |= ;
     if(register_netdev(netdev)) {
         pr_err("%s: fail to register netdev\n",__func__);
         free_netdev(netdev);

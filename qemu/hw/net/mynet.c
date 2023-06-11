@@ -54,7 +54,7 @@ const char global_mac[6] = {
 static uint64_t mynet_common_readfn(void *opaque, hwaddr addr, unsigned size)
 {
     MynetState *ms = MYNET(opaque);
-    return (uint64_t) (   *( (uint8_t *)&ms->reg + addr)  );
+    return (uint64_t) (    *(  (uint32_t *)( (uint8_t *)&ms->reg + addr )  )  );
 }
 
 static void mynet_common_writefn(void *opaque, hwaddr addr,uint64_t value, unsigned size)
@@ -86,6 +86,7 @@ static void mynet_instance_init(Object *obj)
         MynetStateChannel *msc = MYNET_CHANNEL(qdev_new(TYPE_MYNET_CHANNEL));
         ms->channels[i] = msc;
         msc->ms = ms;
+        msc->num=i;
     }
     
     system("ip addr add 192.168.0.1/24 dev tap0");
@@ -115,7 +116,7 @@ type_init(mynet_register_types)
 
 //we can use  pic[16] ~ pic[39]
 //MAX_IRQ_NUM <= 39 - 16 +1
-void mynet_init(hwaddr base, qemu_irq *irq_table)
+void mynet_init(hwaddr base, qemu_irq *pic)
 {
     hwaddr install_base = base;
 
@@ -140,5 +141,5 @@ void mynet_init(hwaddr base, qemu_irq *irq_table)
     //ms->channels[i].irq[j] = gic_SPI i*MAX_IRQ_NUM_PER_CHANNEL+j + 16 = linux hwirq i*MAX_IRQ_NUM_PER_CHANNEL+j+16+32
     for(int i=0;i<MAX_CHANNEL_NUM;++i)
         for(int j=0;j<MAX_IRQ_NUM_PER_CHANNEL;++j)
-            sysbus_connect_irq(SYS_BUS_DEVICE(ms->channels[i]), j, irq_table[ i*MAX_IRQ_NUM_PER_CHANNEL+j  + 16]);
+            sysbus_connect_irq(SYS_BUS_DEVICE(ms->channels[i]), j, pic[16 + i*MAX_IRQ_NUM_PER_CHANNEL+j]);
 }
