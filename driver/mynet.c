@@ -34,9 +34,9 @@ module_param(param_real_rx_channel_count, int, 0644);
 //static int param_watchdog_timeo = 5;/* In jiffies */
 //module_param(param_watchdog_timeo, int, 0);
 
-static int param_tx_ring_node_count = 64;
+static int param_tx_ring_node_count = 4;
 module_param(param_tx_ring_node_count, int, 0644);
-static int param_rx_ring_node_count = 64;
+static int param_rx_ring_node_count = 4;
 module_param(param_rx_ring_node_count, int, 0644);
 
 
@@ -60,7 +60,7 @@ struct channel_data channel_info[MAX_CHANNEL_NUM];
 
 int	mynet_open(struct net_device *netdev)
 {
-    //hw_init
+    pr_err("mynet_open:hw_init\n");
     for(int i=0; i < MAX_CHANNEL_NUM; ++i) {
         writel_relaxed(0, &channel_info[i].reg_base_channel->tx_ctl_status);
         writel_relaxed(0, &channel_info[i].reg_base_channel->rx_ctl_status);
@@ -73,7 +73,7 @@ int	mynet_open(struct net_device *netdev)
         writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_mask  );
     }
 
-
+    pr_err("mynet_open:ring_init\n");
     if(ring_init()){
         return -1;
     }
@@ -89,33 +89,32 @@ int	mynet_open(struct net_device *netdev)
         return -1;
     }
 
-    //pr_err("hw_start_real_channel\n");
-    //hw_start_real_channel
-
+    pr_err("hw_start_real_channel\n");
     for(int i=0; i < real_rx_channel_count; ++i) {
-        pr_err("rx channel:%d set base",i);
+        //pr_err("rx channel:%d set base",i);
         writel_relaxed(channel_info[i].rx_ring->dma_addr,    &channel_info[i].reg_base_channel->rx_ring_base);//set base
-        pr_err("rx channel:%d set irq_flag",i);
+        //pr_err("rx channel:%d set irq_flag",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->rx_irq_flag);
-        pr_err("rx channel:%d set irq_mask",i);
+        //pr_err("rx channel:%d set irq_mask",i);
         writel_relaxed(IRQF_RX_RECV,                                &channel_info[i].reg_base_channel->rx_irq_mask);//unmask IRQF_RX_RECV
-        pr_err("rx channel:%d set ctl_status",i);
+        //pr_err("rx channel:%d set ctl_status",i);
         writel(1,                                                 &channel_info[i].reg_base_channel->rx_ctl_status);//start
     }
     
 
     for(int i=0; i < real_tx_channel_count; ++i) {
-        pr_err("tx channel:%d set base",i);
+        //pr_err("tx channel:%d set base",i);
         writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
-        pr_err("tx channel:%d set irq_flag",i);
+        //pr_err("tx channel:%d set irq_flag",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->tx_irq_flag);
-        pr_err("tx channel:%d set irq_mask",i);
+        //pr_err("tx channel:%d set irq_mask",i);
         writel_relaxed(IRQF_TX_SEND,                               &channel_info[i].reg_base_channel->tx_irq_mask);//unmask IRQF_TX_SEND
-        pr_err("tx channel:%d set ctl_status",i);
+        //pr_err("tx channel:%d set ctl_status",i);
         writel(1,                                                 &channel_info[i].reg_base_channel->tx_ctl_status);//start
     }
 
     netif_tx_start_all_queues(netdev);
+    pr_err("mynet_open:return\n");
     return 0;
 }
 int	mynet_stop(struct net_device *netdev)
@@ -171,14 +170,14 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     pr_err("MYNET:mynet_poll_tx:channel=%p\n",channel);
     //spin_lock(&channel->spinlock_tx_ring_full);
     while(budget > done) {
-        if(is_node_belong_to_hw(channel->tx_ring_full)) {
-            //pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
-            //      "there is data in tx ting, but wait for hw send data\n");
+        if(channel->tx_ring_full==channel->tx_ring_empty) {
+            pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
+                    "there is no data in tx ting");
             break;
         }
-        if(channel->tx_ring_full==channel->tx_ring_empty) {
-            //pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
-            //        "there is no data in tx ting");
+        if(is_node_belong_to_hw(channel->tx_ring_full)) {
+            pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
+                  "there is data in tx ting, but wait for hw send data\n");
             break;
         }
         if(is_node_transfer(channel->tx_ring_full)) {
@@ -212,6 +211,7 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     //unmask IRQF_TX_SEND
     //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
     //mask |= IRQF_TX_SEND;
+    printk("MYNET:mynet_poll_tx:unmask IRQF_TX_SEND\n");
     writel_relaxed(IRQF_TX_SEND, &channel->reg_base_channel->tx_irq_mask);
     return done;
 }
@@ -287,7 +287,6 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             format_error = 0;
         //}
     }
-
 
     BUG_ON(format_error);
 

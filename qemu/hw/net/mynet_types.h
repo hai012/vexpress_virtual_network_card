@@ -1,9 +1,10 @@
 #ifndef __MYNET_TYPES_H
 #define __MYNET_TYPES_H
 
-
+#include "exec/cpu-common.h"
+#include "exec/address-spaces.h"
 #include "hw/sysbus.h"
-
+#include "exec/memattrs.h"
 
 #define TYPE_MYNET "mynet"
 #define MYNET(obj) OBJECT_CHECK(MynetState, (obj), TYPE_MYNET)
@@ -78,7 +79,7 @@ struct RegChannel{
 #define NODE_F_TRANSFER (1<<1)
 
 struct ring_node_t {
-    //flag bit0 = 1,belone to eth card,bit0==0,belone to driver.
+    //flag bit0 = 1,belone to eth card,     bit0==0,belone to driver.
     //flag bit1 = 1,transfer imidiately, bit1 = 0, transfer together with the next.
     uint32_t flag;
     uint32_t base;
@@ -122,14 +123,11 @@ typedef struct RegCommon RegCommon;
 
 
 
-#include <exec/address-spaces.h>
-
-
-MemTxResult inline read_guest_phy_addr(hwaddr addr,void *buf, hwaddr len)
+static inline MemTxResult read_guest_phy_addr(hwaddr addr,void *buf, hwaddr len)
 {
     return address_space_read_full(&address_space_memory, addr, MEMTXATTRS_UNSPECIFIED, buf, len);
 }
-MemTxResult inline write_guest_phy_addr(hwaddr addr,void *buf, hwaddr len)
+static inline MemTxResult write_guest_phy_addr(hwaddr addr,void *buf, hwaddr len)
 {
     return address_space_write(&address_space_memory, addr, MEMTXATTRS_UNSPECIFIED, buf, len);
 }

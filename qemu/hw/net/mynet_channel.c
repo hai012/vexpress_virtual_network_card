@@ -36,15 +36,18 @@
 
 
 
-static int tap_write(struct MynetStateChannel *msc);
+static int tap_write(int fd,struct ring_node_t *node_table,uint32_t frag_count);
 static void *pthread_fn_tx(void *ptr);
-static int tap_read(struct MynetStateChannel *msc);
+static ssize_t tap_read(int fd,struct ring_node_t *ring_node_ptr);
 static void *pthread_fn_rx(void *ptr);
 static void mynet_channel_writefn(void *opaque, hwaddr addr, uint64_t value, unsigned size);
 static uint64_t mynet_channel_readfn(void *opaque, hwaddr addr, unsigned size);
 static int open_tap(void);
 static void mynet_channel_instance_init(Object *obj);
 static void mynet_channel_register_types(void);
+
+
+
 
 
 /*#include <execinfo.h>
@@ -118,28 +121,35 @@ static const MemoryRegionOps mynet_channel_mem_ops = {
 
 //**************************************************************************************
 
-static int tap_write(int fd,struct ring_node_t *node_table,uini32_t frag_count)
+static int tap_write(int fd,struct ring_node_t *node_table,uint32_t frag_count)
 {
     struct iovec  iov[MAX_SKB_FRAGS];
     ssize_t all_len=0,ret;
+    hwaddr frag_len;
 
     for(int index=0; index<frag_count; ++index) {
-        iov[index].iov_base = cpu_physical_memory_map(node_table[index].base,node_table[index].len,0);
+        frag_len = node_table[index].len;
+        iov[index].iov_base = cpu_physical_memory_map(node_table[index].base,&frag_len,0);
         if(!iov[index].iov_base){
-            printf("QEMU:channel_%d, parse tap_write iov_base failed, guest phy addr=0x%08x,len=0x%08x\n",msc->num,node_table[index].base,node_table[index].len);
+            printf("QEMU:TX:parse tap_write iov_base failed, guest phy addr=0x%08x,len=0x%08x\n",node_table[index].base,node_table[index].len);
+            return -1;
+        }
+        if(frag_len != node_table[index].len) {
+            printf("QEMU:TX:cpu_physical_memory_map modify frag_len\n");
             return -1;
         }
         iov[index].iov_len = (size_t)node_table[index].len;
         all_len += node_table[index].len;
     }
-    ret = writev(msc->tap_fd, iov, frag_count);
+    ret = writev(fd, iov, frag_count);
     for(int index=0; index<frag_count; ++index) {
-        cpu_physical_memory_unmap(node_table[index].base, node_table[index].len,0,node_table[index].len);
+        cpu_physical_memory_unmap(iov[index].iov_base, node_table[index].len,0,node_table[index].len);
     }
     if(ret != all_len) {
-        printf("QEMU:write failed,reason=%s,ret=%ld,count=%ld\n",strerror(errno),ret,all_len);
+        printf("QEMU:TX:write failed,reason=%s,ret=%ld,count=%ld\n",strerror(errno),ret,all_len);
         return -1;
     }
+    return 0;
 }
 
 static void *pthread_fn_tx(void *ptr)
@@ -147,6 +157,7 @@ static void *pthread_fn_tx(void *ptr)
     MynetStateChannel *msc = ptr;
     struct ring_node_t node_table[MAX_SKB_FRAGS];
     uint32_t node_table_guest[MAX_SKB_FRAGS];
+    int frag_index;
 
     for(;;) {
         pthread_mutex_lock(&msc->mutex_tx);
@@ -154,8 +165,8 @@ static void *pthread_fn_tx(void *ptr)
             pthread_cond_wait(&msc->cond_tx, &msc->mutex_tx);
         pthread_mutex_unlock(&msc->mutex_tx);
 
-        //printf("QEMU:tx a skb:tx_ring_node_base=0x%08x\n",msc->reg.tx_ring_base);
-        for(int frag_index=0; frag_index<MAX_SKB_FRAGS; ++frag_index) {
+        printf("QEMU:tx a skb:tx_ring_node_base=0x%08x\n",msc->reg.tx_ring_base);
+        for(frag_index=0; frag_index<MAX_SKB_FRAGS; ++frag_index) {
             node_table_guest[frag_index] = msc->reg.tx_ring_base;
             if(read_guest_phy_addr(msc->reg.tx_ring_base,&node_table[frag_index],sizeof(struct ring_node_t))) {
                 printf("QEMU:TX:read ring_node failed,guest addr=0x%08x\n",msc->reg.tx_ring_base);
@@ -163,18 +174,23 @@ static void *pthread_fn_tx(void *ptr)
                 TX_IF_NEED_IRQ(IRQF_TX_ERR);
                 break;
             }
+            printf("flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",node_table[frag_index].flag,node_table[frag_index].base,node_table[frag_index].len,node_table[frag_index].next);
+
             if(!(node_table[frag_index].flag & NODE_F_BELONG)) {
                 if(frag_index) {
-                    printf("QEMU:TX:ring format err,flag & NODE_F_BELONG == 0, belong to driver, but frag_index=%d\n",frag_index);
+                    printf("QEMU:TX:ring format err,flag bit0 == 0, belong to driver, but frag_index=%d\n",frag_index);
                     TX_FLAG_MODIFY(CTL_FLAG_STOP);
                     TX_IF_NEED_IRQ(IRQF_TX_ERR);
                     break;
                 }
-                printf("QEMU:TX:flag & NODE_F_BELONG == 0, belong to driver, tx ring buffer empty\n");
+                printf("QEMU:TX:flag bit0 == 0, belong to driver, tx ring buffer empty\n");
                 TX_FLAG_MODIFY(CTL_FLAG_STOP);
                 TX_IF_NEED_IRQ(IRQF_TX_EMPTY);
                 break;
             }
+
+            
+
             if(node_table[frag_index].flag & NODE_F_TRANSFER) {
                 if(tap_write(msc->tap_fd,node_table,frag_index+1)) {
                     printf("QEMU:TX:tap_write failed\n");
@@ -182,20 +198,26 @@ static void *pthread_fn_tx(void *ptr)
                     TX_IF_NEED_IRQ(IRQF_TX_ERR);
                     break;
                 }
-                //send sucess, ring_node_flag bit1==1, mark nodes belong to driver
-                while(frag_index >= 0) {
-                    node_table[frag_index].flag |= NODE_F_BELONG;
-                    if(write_guest_phy_addr(node_table_guest[frag_index],&node_table[frag_index].flag,4)) {
-                        printf("QEMU:TX:write FLAG failed,guest addr=0x%08x\n",node_table_guest[frag_index]);
+
+                printf("QEMU:send sucess, set ring_node_flag bit0==0,belongs to driver\n");
+                for(int mark_index=frag_index; mark_index>=0; --mark_index) {
+                    node_table[mark_index].flag &= ~NODE_F_BELONG;
+                    if(write_guest_phy_addr(node_table_guest[mark_index],&node_table[mark_index].flag,4)) {
+                        printf("QEMU:TX:write FLAG failed,guest addr=0x%08x\n",node_table_guest[mark_index]);
                         TX_FLAG_MODIFY(CTL_FLAG_STOP);
                         TX_IF_NEED_IRQ(IRQF_TX_ERR);
                     }
-                    --frag_index;
                 }
                 TX_IF_NEED_IRQ(IRQF_TX_SEND);
+                msc->reg.tx_ring_base = node_table[frag_index].next;//handle next frag which belong a new skb
                 break;//check tx_ctl_status before send the next skb
             }
-            msc->reg.tx_ring_base = node_table[frag_index].next;//next frag which belong a same skb
+            msc->reg.tx_ring_base = node_table[frag_index].next;//handle next frag which belong a same skb
+        }
+        if(frag_index == MAX_SKB_FRAGS) {
+            printf("QEMU:TX:formant err, frags is too many in a skb\n");
+            TX_FLAG_MODIFY(CTL_FLAG_STOP);
+            TX_IF_NEED_IRQ(IRQF_TX_ERR);
         }
     }
     return NULL;
@@ -203,20 +225,23 @@ static void *pthread_fn_tx(void *ptr)
 
 static ssize_t tap_read(int fd,struct ring_node_t *ring_node_ptr)
 {
-    struct iovec  iov[MAX_SKB_FRAGS];
     ssize_t buf_len=0,ret;
     void *buf;
-
-    buf = cpu_physical_memory_map(ring_node_ptr->base,ring_node_ptr->len,1);
+    hwaddr frag_len = ring_node_ptr->len;
+    buf = cpu_physical_memory_map(ring_node_ptr->base,&frag_len,1);
     if(!buf) {
-        printf("QEMU:RX:channel_%d, parse tap_write iov_base failed, guest phy addr=0x%08x,len=0x%08x\n",msc->num,ring_node_ptr->base,ring_node_ptr->len);
+        printf("QEMU:RX:parse tap_write iov_base failed, guest phy addr=0x%08x,len=0x%08x\n",ring_node_ptr->base,ring_node_ptr->len);
+        return -1;
+    }
+    if(frag_len != ring_node_ptr->len) {
+        printf("QEMU:RX:cpu_physical_memory_map modify frag_len\n");
         return -1;
     }
     buf_len = ring_node_ptr->len;
 
-    ret = read(msc->tap_fd, buf, buf_len);
+    ret = read(fd, buf, buf_len);
 
-    cpu_physical_memory_unmap(ring_node_ptr->base, ring_node_ptr->len,1,ring_node_ptr->len);
+    cpu_physical_memory_unmap(buf, ring_node_ptr->len,1,ring_node_ptr->len);
 
     if(ret <= 0) {
         printf("QEMU:RX:fail to readv,reason=%s,ret=%ld\n",strerror(errno),ret);
@@ -243,13 +268,13 @@ static void *pthread_fn_rx(void *ptr)
             continue;
         }
         if(!(ring_node.flag & NODE_F_BELONG)) {
-            printf("QEMU:RX:flag & NODE_F_BELONG == 0, belong to driver, rx ring buffer empty\n");
+            printf("QEMU:RX:flag bit0== 0, belong to driver, rx ring buffer full\n");
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
             RX_IF_NEED_IRQ(IRQF_RX_FULL);
             continue;
         }
 
-        ret = tap_read(msc->tap_fd, &node_table)
+        ret = tap_read(msc->tap_fd, &ring_node);
         if(ret <= 0) {
             printf("QEMU:RX:tap_read failed\n");
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
@@ -263,8 +288,8 @@ static void *pthread_fn_rx(void *ptr)
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
             RX_IF_NEED_IRQ(IRQF_RX_ERR);
         }
-        //mark nodes belong to driver,ring_node_flag bit1==1
-        ring_node.flag |= NODE_F_BELONG;
+        //set ring_node_flag bit0==0, belongs to driver
+        ring_node.flag &= ~NODE_F_BELONG;
         if(write_guest_phy_addr(msc->reg.rx_ring_base,&ring_node.flag,4)) {
             printf("QEMU:RX:write FLAG failed,guest addr=0x%08x\n",msc->reg.rx_ring_base);
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
@@ -303,17 +328,18 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
         }
         break;
     case 0x08://irq flag reg
-        //printf("CLEAR_SEND_IRQ\n");
         msc->reg.tx_irq_flag = (uint32_t) value & ALL_IRQF_TX;
+        printf("QEMU:set IRQ flag,reg=0x%08x\n",msc->reg.tx_irq_flag);
         if( !(msc->reg.tx_irq_flag & msc->reg.tx_irq_mask)) {
-            //printf("QEMU:set flag,clear tx irq,tx_irq_flag=0x%04x,tx_irq_mask=0x%04x\n",msc->reg.tx_irq_flag,msc->reg.tx_irq_mask);
+            printf("QEMU:set flag,clear tx irq,tx_irq_flag=0x%08x,tx_irq_mask=0x%08x\n",   msc->reg.tx_irq_flag,   msc->reg.tx_irq_mask);
             qemu_set_irq(msc->irq[CHANNEL_IRQ_TX], 0);
         }
         break;
     case 0x0c://irq mask reg, 0 musk , 1 not musk
 		msc->reg.tx_irq_mask = (uint32_t)value & ALL_IRQF_TX;
+        printf("QEMU:set IRQ mask,reg=0x%08x\n",msc->reg.tx_irq_mask);
         if( !(msc->reg.tx_irq_flag & msc->reg.tx_irq_mask)) {
-            //printf("QEMU:set mask,clear tx irq,tx_irq_flag=0x%04x,tx_irq_mask=0x%04x\n",msc->reg.tx_irq_flag,msc->reg.tx_irq_mask);
+            printf("QEMU:set IRQ mask,clear tx irq,tx_irq_flag=0x%08x,tx_irq_mask=0x%08x\n",msc->reg.tx_irq_flag,msc->reg.tx_irq_mask);
             qemu_set_irq(msc->irq[CHANNEL_IRQ_TX], 0);
         }
         break;

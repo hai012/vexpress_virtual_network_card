@@ -11,7 +11,6 @@ irqreturn_t irq_handler_tx(int irq, void *data)
         //mask IRQF_TX_SEND;
         //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
         //mask &= ~IRQF_TX_SEND;
-        writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);
 
         if (likely(napi_schedule_prep(&channel->napi_tx))) {
             printk("MYNET:tx_hw_irq,prep\n",flag);
@@ -31,7 +30,7 @@ irqreturn_t irq_handler_tx(int irq, void *data)
         //flag &= ~IRQF_TX_ERR;//clear
     }*/
     BUG_ON(flag & IRQF_TX_ERR);
-
+    printk("MYNET:irq_handler_tx:clear flag\n");
     writel(flag, &channel->reg_base_channel->tx_irq_flag);
     return IRQ_HANDLED;
 }
