@@ -138,6 +138,11 @@ static int tap_write(int fd,struct ring_node_t *node_table,uint32_t frag_count)
             printf("QEMU:TX:cpu_physical_memory_map modify frag_len\n");
             return -1;
         }
+        printf("QEMU:TX:FRAG:");
+        for(int i=0;i<node_table[index].len;++i) {
+            printf(" 0x%02hhx", *((char*)iov[index].iov_base + i) );
+        }
+        printf("\n");
         iov[index].iov_len = (size_t)node_table[index].len;
         all_len += node_table[index].len;
     }
