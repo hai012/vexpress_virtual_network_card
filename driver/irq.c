@@ -13,7 +13,7 @@ irqreturn_t irq_handler_tx(int irq, void *data)
         //mask &= ~IRQF_TX_SEND;
 
         if (likely(napi_schedule_prep(&channel->napi_tx))) {
-            printk("MYNET:tx_hw_irq,prep\n",flag);
+            //printk("MYNET:tx_hw_irq,prep\n");
             __napi_schedule(&channel->napi_tx);
             writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);//mask IRQF_TX_SEND;
         }
@@ -38,13 +38,13 @@ irqreturn_t irq_handler_rx(int irq, void *data)
 {
     struct channel_data * channel = (struct channel_data *)data;
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->rx_irq_flag);
-    printk("MYNET:rx_hw_irq,flag:0x%04x\n",flag);
+    printk("MYNET:rx_hw_irq,flag:0x%08x\n",flag);
     if(flag & IRQF_RX_RECV) {
         //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
         //mask &= ~IRQF_RX_RECV;
 
         if (likely(napi_schedule_prep(&channel->napi_rx))) {
-            printk("MYNET:rx_hw_irq,prep\n",flag);
+            //printk("MYNET:rx_hw_irq,prep\n");
             __napi_schedule(&channel->napi_rx);
             writel_relaxed(0, &channel->reg_base_channel->rx_irq_mask);//mask IRQF_RX_RECV;
         }
@@ -64,17 +64,27 @@ irqreturn_t irq_handler_rx(int irq, void *data)
     writel(flag, &channel->reg_base_channel->rx_irq_flag);
     return IRQ_HANDLED;
 }
+const char * irq_name_rx[] = {
+    "mynet_irq_rx_0",
+    "mynet_irq_rx_1",
+    "mynet_irq_rx_2",
+    "mynet_irq_rx_3"
+};
+const char * irq_name_tx[] = {
+    "mynet_irq_tx_0",
+    "mynet_irq_tx_1",
+    "mynet_irq_tx_2",
+    "mynet_irq_tx_3"
+};
 int register_irq(void)
 {
-    char name_buffer[30];
     for(int i=0; i<real_rx_channel_count; ++i) {
-        snprintf(name_buffer,30,"mynet_irq_rx_%d",i);
         if(devm_request_irq(&pdev->dev,channel_info[i].rx_irqs,//irq_num
                     irq_handler_rx,//func
                     0,//irqflags
-                    name_buffer,//irqname
+                    irq_name_rx[i],//irqname
                     &channel_info[i])) {//dev_id
-            pr_err("%s: fail to request %s\n",__func__,name_buffer);
+            pr_err("%s: fail to request %s\n",__func__,irq_name_rx[i]);
             while( --i >= 0 ) {
                 devm_free_irq(&pdev->dev,channel_info[i].rx_irqs, &channel_info[i]);
             }
@@ -82,13 +92,12 @@ int register_irq(void)
         }
     }
     for(int i=0; i<real_tx_channel_count; ++i) {
-        snprintf(name_buffer,30,"mynet_irq_tx_%d",i);
         if(devm_request_irq(&pdev->dev,channel_info[i].tx_irqs,//irq_num
                     irq_handler_tx,//func
                     0,//irqflags
-                    name_buffer,//irqname
+                    irq_name_tx[i],//irqname
                     &channel_info[i])) {//dev_id
-            pr_err("%s: fail to request %s\n",__func__,name_buffer);
+            pr_err("%s: fail to request %s\n",__func__,irq_name_tx[i]);
             while( --i >= 0 ) {
                 devm_free_irq(&pdev->dev,channel_info[i].tx_irqs, &channel_info[i]);
             }

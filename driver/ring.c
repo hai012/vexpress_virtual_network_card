@@ -14,8 +14,11 @@ static struct ring_node_info *ring_node_info_table;
 
 int ring_init(void)
 {
+    struct ring_node_info *ptr;
     size_t node_count = real_tx_channel_count * tx_ring_node_count +
                         real_rx_channel_count * rx_ring_node_count;
+    
+
     ring_node_info_table = devm_kcalloc(&pdev->dev,node_count,sizeof(struct ring_node_info),GFP_KERNEL);
     if(unlikely(!ring_node_info_table)) {
         pr_err("%s:alloc  ring_node_info_table failed",__func__);
@@ -28,7 +31,7 @@ int ring_init(void)
         return -ENOMEM;
     }
 
-    struct ring_node_info *ptr;
+   
     for(int i=0; i<real_tx_channel_count; ++i) {
         ptr = ring_node_info_table + i * tx_ring_node_count;
         for(int j=0; j< tx_ring_node_count; ++j) {
@@ -67,15 +70,21 @@ int ring_init(void)
     for(int i=0; i< real_tx_channel_count; ++i) {
         ptr = ring_node_info_table + i * tx_ring_node_count;
         for(int j=0; j< tx_ring_node_count; ++j) {
-            pr_err("MYNET:%d:TX:ring_node kva=0x%08x phy=0x%08x next_kva=0x%08x next_phy=0x%08x\n",
-                        i,(ptr+j)->virtual_addr,(ptr+j)->dma_addr,(ptr+j)->next,(ptr+j)->virtual_addr->next);
+            pr_err("MYNET:%d:TX:ring_node node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
+                        i,
+                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
+                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
+                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
         }
     }
     for(int i=0; i< real_rx_channel_count; ++i) {
         ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count + i * rx_ring_node_count;
         for(int j=0; j< rx_ring_node_count; ++j) {
-            pr_err("MYNET:%d:RX:ring_node kva=0x%08x phy=0x%08x next_kva=0x%08x next_phy=0x%08x\n",
-                        i,(ptr+j)->virtual_addr,(ptr+j)->dma_addr,(ptr+j)->next,(ptr+j)->virtual_addr->next);
+            pr_err("MYNET:%d:RX:ring_node node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
+                        i,
+                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
+                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
+                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
         }
     }
 
@@ -83,6 +92,28 @@ int ring_init(void)
         pr_err("%s:fail to alloc and map skb for rx_ring",__func__);
         goto err_out;
     }
+    pr_err("\n\n\n\n\n");
+    for(int i=0; i< real_tx_channel_count; ++i) {
+        ptr = ring_node_info_table + i * tx_ring_node_count;
+        for(int j=0; j< tx_ring_node_count; ++j) {
+            pr_err("MYNET:%d:TX:ring_node node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
+                        i,
+                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
+                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
+                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
+        }
+    }
+    for(int i=0; i< real_rx_channel_count; ++i) {
+        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count + i * rx_ring_node_count;
+        for(int j=0; j< rx_ring_node_count; ++j) {
+            pr_err("MYNET:%d:RX:ring_node node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
+                        i,
+                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
+                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
+                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
+        }
+    }
+
     return 0;
 
 err_out:
@@ -118,6 +149,7 @@ int rx_ring_dma_init(void)
     int channelIndex;
     struct ring_node_info * init_start;
     struct ring_node_info * init_end;
+    dma_addr_t dma_addr;
 
     for(channelIndex=0; channelIndex<real_rx_channel_count; ++channelIndex) {
         init_start=channel_info[channelIndex].rx_ring;
@@ -130,7 +162,7 @@ int rx_ring_dma_init(void)
                 pr_err("netdev_alloc_frag failed");
                 goto err_clean_previous;
             }
-            dma_addr_t dma_addr = dma_map_single(&pdev->dev,
+            dma_addr = dma_map_single(&pdev->dev,
                                                  liner_buffer + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
                                                  MAX_RECV_LEN,
                                                  DMA_TO_DEVICE);
@@ -145,6 +177,9 @@ int rx_ring_dma_init(void)
             writel_relaxed(dma_addr,                        &init_start->virtual_addr->base);
             writel_relaxed(MAX_RECV_LEN,                    &init_start->virtual_addr->len);
             writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &init_start->virtual_addr->flag);
+            //init_start->virtual_addr->base = dma_addr;
+            //init_start->virtual_addr->len = MAX_RECV_LEN;
+            //init_start->virtual_addr->flag = NODE_F_TRANSFER|NODE_F_BELONG;
 
             init_start = init_start->next;
         }while(init_start != init_end);
@@ -180,7 +215,12 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     struct scatterlist *scl, *crt_scl;
     unsigned int num_dma_bufs,i;
     int num_sg;
+    unsigned int nodes_need;
     unsigned int frag_count = skb_shinfo(skb)->nr_frags + 1;
+    struct ring_node_info * fill;
+    struct ring_node_info *node_table[MAX_SKB_FRAGS];
+
+
     scl = devm_kmalloc_array(&pdev->dev,frag_count, sizeof(struct scatterlist), GFP_KERNEL);
     if (unlikely(!scl))
       	return -ENOMEM;
@@ -200,7 +240,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 
     //check if it has enough node to fill
     //spin_lock(&channel->spinlock_tx_ring_empty);
-    unsigned int nodes_need = num_dma_bufs;
+    nodes_need = num_dma_bufs;
     for(struct ring_node_info *node=channel->tx_ring_empty;
         node->next != channel->tx_ring_full;
         node=node->next) {
@@ -214,8 +254,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     }
 
     //start fill content
-    struct ring_node_info * fill = channel->tx_ring_empty;
-    struct ring_node_info *node_table[MAX_SKB_FRAGS];
+    fill = channel->tx_ring_empty;
     for_each_sg(scl, crt_scl, num_dma_bufs, i) {
         node_table[i] = fill;
         writel_relaxed(sg_dma_address(crt_scl), &fill->virtual_addr->base);

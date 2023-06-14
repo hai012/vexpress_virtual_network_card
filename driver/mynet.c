@@ -91,19 +91,19 @@ int	mynet_open(struct net_device *netdev)
 
     pr_err("hw_start_real_channel\n");
     for(int i=0; i < real_rx_channel_count; ++i) {
-        //pr_err("rx channel:%d set base",i);
-        writel_relaxed(channel_info[i].rx_ring->dma_addr,    &channel_info[i].reg_base_channel->rx_ring_base);//set base
+        pr_err("MYNET:%d:RX set base:channel_info[i].rx_ring->dma_addr=0x%08x\n",i,channel_info[i].rx_ring->dma_addr);
+        writel_relaxed(channel_info[i].rx_ring->dma_addr,         &channel_info[i].reg_base_channel->rx_ring_base);//set base
         //pr_err("rx channel:%d set irq_flag",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->rx_irq_flag);
         //pr_err("rx channel:%d set irq_mask",i);
-        writel_relaxed(IRQF_RX_RECV,                                &channel_info[i].reg_base_channel->rx_irq_mask);//unmask IRQF_RX_RECV
+        writel_relaxed(IRQF_RX_RECV,                              &channel_info[i].reg_base_channel->rx_irq_mask);//unmask IRQF_RX_RECV
         //pr_err("rx channel:%d set ctl_status",i);
         writel(1,                                                 &channel_info[i].reg_base_channel->rx_ctl_status);//start
     }
     
 
     for(int i=0; i < real_tx_channel_count; ++i) {
-        //pr_err("tx channel:%d set base",i);
+        pr_err("MYNET:%d:TX set base:channel_info[i].tx_ring_full->dma_addr=0x%08x\n",i,channel_info[i].tx_ring_full->dma_addr);
         writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
         //pr_err("tx channel:%d set irq_flag",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->tx_irq_flag);
@@ -240,7 +240,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             //char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
             linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL|GFP_DMA, 0);
             if(unlikely(!linear_buffer_replace)) {
-                pr_err("MYNET:%d:RX:napi_alloc_frag failed\n");
+                pr_err("MYNET:%d:RX:napi_alloc_frag failed\n",channel->num);
                 goto umask_and_ctl_run;
             }
             dma_addr = dma_map_single(&pdev->dev,
@@ -248,7 +248,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                                       MAX_RECV_LEN,
                                       DMA_TO_DEVICE);
             if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
-                pr_err("MYNET:%d:RX:dma_map_single  failed\n");
+                pr_err("MYNET:%d:RX:dma_map_single  failed\n",channel->num);
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
                 goto umask_and_ctl_run;
             }
@@ -267,7 +267,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             //recv
             skb = napi_build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
             if (unlikely(!skb)) {
-                pr_err("MYNET:%d:RX:build_skb fail\n");
+                pr_err("MYNET:%d:RX:build_skb fail\n",channel->num);
                 skb_free_frag(linear_buffer_recv);
                 //netdev->stats.rx_dropped++;
                 goto umask_and_ctl_run;
@@ -276,12 +276,21 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
             skb_record_rx_queue(skb,channel->queue_index);
             skb->dev = netdev;
-            skb->ip_summed = CHECKSUM_UNNECESSARY;
+            /*接收过程中，ip_summed字段包含了网络设备硬件告诉L4软件当前校验和的状态，各值含义如下：
+CHECKSUM_NONE：硬件没有提供校验和，可能是硬件不支持，也可能是硬件校验出错但是并未丢弃数据包，这时L4软件需要自己进行校验和计算；
+CHECKSUM_UNNECESSARY：硬件已经进行了完整的校验，软件无需再进行检查。这时L4软件会跳过校验和检查；
+CHECKSUM_COMPLETE：硬件已经计算了L4报头和其payload部分的校验和，并将计算结果保存在了skb->csum中，L4软件只需要再计算伪报头即可；
+发送过程中，ip_summed字段记录了L4软件想要告诉网络设备硬件关于当前数据包的校验和状态信心。各值含义如下：
+
+CHECKSUM_NONE：L4软件已经对数据包进行了完整的校验，或者该数据包不需要校验。总之这种情况下网络设备硬件无需做任何校验和计算；
+CHECKSUM_PARTIAL：L4软件计算了伪报头的校验和，并且将值保存在了数据报的L4层首部的check字段中，网络设备硬件需要计算其余部分的校验和（报文首部+数据部分）。硬件需要计算的报文范围是从skb->csum_start到报文最后一个字节，计算结果需要填写到（skb->csum_start + skb->csum_offset）处。
+*/
+            skb->ip_summed = CHECKSUM_UNNECESSARY;/* don't check it */
             skb->protocol = eth_type_trans(skb, netdev);
 
             bytes += skb->len;
             ++done;
-            pr_err("MYNET:%d:RX:napi_gro_receive  skb\n");
+            pr_err("MYNET:%d:RX:napi_gro_receive  skb\n",channel->num);
 
             napi_gro_receive(napi,skb);
 
@@ -400,8 +409,13 @@ static int mynet_probe(struct platform_device *dev)
         netif_napi_add(netdev, &channel_info[i].napi_rx, mynet_poll_rx);
     }
     netdev->netdev_ops = &mynet_netdev_ops;
-	//netdev->flags           |= ;
-	//netdev->features        |= ;
+    //dev->flags           |= IFF_NOARP;
+    //dev->features        |= NETIF_F_HW_CSUM;
+/*NETIF_F_IP_CSUM	2	网络设备可以提供对基于IPv4的TCP和UDP数据包进行校验，其它协议报文不支持
+NETIF_F_NO_CSUM	4	网络设备的传输非常可靠，无需L4执行任何校验，环回设备一般设置该标记
+NETIF_F_HW_CSUM	8	网络设备可以对任何L4协议的数据包进行校验，基本很少有硬件能够实现
+NETIF_F_IPV6_CSUM	16	网络设备可以对基于IPv6的TCP和UDP数据包进行校验，其它协议报文不支持*/
+	netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO| NETIF_F_SG;//hardware doesn't support checksum ,calc it by software when GSO segment
     if(register_netdev(netdev)) {
         pr_err("%s: fail to register netdev\n",__func__);
         free_netdev(netdev);
