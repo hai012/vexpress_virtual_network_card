@@ -237,10 +237,10 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
 
             //replace
             //char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
-            linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
+            linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL|GFP_DMA, 0);
             if(unlikely(!linear_buffer_replace)) {
                 pr_err("MYNET:napi_alloc_frag failed\n");
-                return done;
+                goto umask_and_ctl_run;
             }
             dma_addr = dma_map_single(&pdev->dev,
                                       linear_buffer_replace + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
@@ -249,7 +249,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
                 pr_err("MYNET:dma_map_single  failed\n");
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
-                return done;
+                goto umask_and_ctl_run;
             }
             dma_unmap_single(&pdev->dev,
                             channel->rx_ring->virtual_addr->base,
@@ -269,7 +269,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 pr_err("MYNET:build_skb fail\n");
                 skb_free_frag(linear_buffer_recv);
                 //netdev->stats.rx_dropped++;
-                return done;
+                goto umask_and_ctl_run;
             }
             //skb_mark_for_recycle(skb); see page_pool
             skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
@@ -295,17 +295,16 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     channel->rx_packets += done;
     channel->rx_bytes += bytes;
 
-
+umask_and_ctl_run:
     //unmask IRQF_TX_IRQF_RX_RECVSEND
     //uini32_t mask = readl_relaxed(&channel->reg_base_channel->rx_irq_mask);
     //mask |= IRQF_RX_RECV;
     writel_relaxed(IRQF_RX_RECV,  &channel->reg_base_channel->rx_irq_mask);
-
-
-    //start rx anyway， no mater hw rx thread is run
+    //start rx anyway no mater hw rx thread is run
     writel_relaxed(1,  &channel->reg_base_channel->rx_ctl_status);
 
     return done;
+
 }
 
 static int mynet_probe(struct platform_device *dev)

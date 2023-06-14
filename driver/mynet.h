@@ -12,6 +12,14 @@ drivers/net/ethernet/freescale/dpaa2/dpaa2-eth.c  dpaa2_eth_build_sg_fd
 include/linux/netdev_features.h
 
 
+all :
+    (start/stop tsg)		(start/stop checksum)
+    (link speed)     		(link status)
+
+	(global mac addr)
+	(rx mac addr musk[4])	(rx mac addr filter[4])
+
+fec_enet_rx_napi
 
 
 

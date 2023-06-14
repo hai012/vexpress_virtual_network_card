@@ -165,7 +165,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     unsigned int num_dma_bufs,i;
     int num_sg;
     unsigned int frag_count = skb_shinfo(skb)->nr_frags + 1;
-    scl = devm_kmalloc_array(&pdev->dev,frag_count, sizeof(struct scatterlist), GFP_KERNEL);
+    scl = devm_kmalloc_array(&pdev->dev,frag_count, sizeof(struct scatterlist), GFP_KERNEL|GFP_DMA);
     if (unlikely(!scl))
       	return -ENOMEM;
     sg_init_table(scl, frag_count);
