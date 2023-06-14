@@ -30,13 +30,14 @@ int ring_init(void)
 
     struct ring_node_info *ptr;
     for(int i=0; i<real_tx_channel_count; ++i) {
-        ptr = ring_node_info_table + i*tx_ring_node_count;
+        ptr = ring_node_info_table + i * tx_ring_node_count;
         for(int j=0; j< tx_ring_node_count; ++j) {
-            (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &(ptr+j)->dma_addr);
+            (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL|GFP_DMA, &(ptr+j)->dma_addr);
             if(unlikely(!(ptr+j)->virtual_addr)) {
                 goto err_out;
             }
         }
+        
         for(int j=0; j<tx_ring_node_count-1; ++j) {
             (ptr+j)->next = (ptr+j+1);
             (ptr+j)->virtual_addr->next = (ptr+j+1)->dma_addr;
@@ -47,9 +48,9 @@ int ring_init(void)
         channel_info[i].tx_ring_full = ptr;
     }
     for(int i=0; i< real_rx_channel_count; ++i) {
-        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count;
+        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count + i * rx_ring_node_count;
         for(int j=0; j< rx_ring_node_count; ++j) {
-            (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL, &(ptr+j)->dma_addr);
+            (ptr+j)->virtual_addr = dma_pool_zalloc(pool, GFP_KERNEL|GFP_DMA, &(ptr+j)->dma_addr);
             if(unlikely(!(ptr+j)->virtual_addr)) {
                 goto err_out;
             }
@@ -61,6 +62,21 @@ int ring_init(void)
         (ptr+rx_ring_node_count-1)->next = ptr;
         (ptr+rx_ring_node_count-1)->virtual_addr->next = ptr->dma_addr;
         channel_info[i].rx_ring = ptr;
+    }
+
+    for(int i=0; i< real_tx_channel_count; ++i) {
+        ptr = ring_node_info_table + i * tx_ring_node_count;
+        for(int j=0; j< tx_ring_node_count; ++j) {
+            pr_err("MYNET:%d:TX:ring_node kva=0x%08x phy=0x%08x next_kva=0x%08x next_phy=0x%08x\n",
+                        i,(ptr+j)->virtual_addr,(ptr+j)->dma_addr,(ptr+j)->next,(ptr+j)->virtual_addr->next);
+        }
+    }
+    for(int i=0; i< real_rx_channel_count; ++i) {
+        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count + i * rx_ring_node_count;
+        for(int j=0; j< rx_ring_node_count; ++j) {
+            pr_err("MYNET:%d:RX:ring_node kva=0x%08x phy=0x%08x next_kva=0x%08x next_phy=0x%08x\n",
+                        i,(ptr+j)->virtual_addr,(ptr+j)->dma_addr,(ptr+j)->next,(ptr+j)->virtual_addr->next);
+        }
     }
 
     if(unlikely(rx_ring_dma_init())) {
@@ -109,7 +125,7 @@ int rx_ring_dma_init(void)
         do
         {
             //pr_err("channelIndex=%d,MAX_RX_SKB_LINEAR_BUFF_LEN=%d\n",channelIndex,MAX_RX_SKB_LINEAR_BUFF_LEN);
-            char *liner_buffer = page_frag_alloc_align(&channel_info[channelIndex].page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL, 0);
+            char *liner_buffer = page_frag_alloc_align(&channel_info[channelIndex].page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL|GFP_DMA, 0);
             if(unlikely(!liner_buffer)) {
                 pr_err("netdev_alloc_frag failed");
                 goto err_clean_previous;
@@ -165,7 +181,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     unsigned int num_dma_bufs,i;
     int num_sg;
     unsigned int frag_count = skb_shinfo(skb)->nr_frags + 1;
-    scl = devm_kmalloc_array(&pdev->dev,frag_count, sizeof(struct scatterlist), GFP_KERNEL|GFP_DMA);
+    scl = devm_kmalloc_array(&pdev->dev,frag_count, sizeof(struct scatterlist), GFP_KERNEL);
     if (unlikely(!scl))
       	return -ENOMEM;
     sg_init_table(scl, frag_count);

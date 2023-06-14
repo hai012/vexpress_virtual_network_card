@@ -225,13 +225,14 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     dma_addr_t dma_addr;
     struct sk_buff * skb;
 
-    pr_err("MYNET:mynet_poll_rx:channel=%p\n",channel);
+    
     while(budget>done)
     {
+        pr_err("MYNET:%d:RX:mynet_poll_rx done=%d budget=%d\n",channel->num,done,budget);
         //if(is_node_transfer(channel->tx_ring_full)) {
             if(is_node_belong_to_hw(channel->rx_ring)) {
                 //now, there is no linear_buffer to receive
-                pr_err("MYNET:now, there is no linear_buffer to receive\n");
+                pr_err("MYNET:%d:RX:now, there is no linear_buffer to receive\n",channel->num);
                 break;
             }
 
@@ -239,7 +240,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             //char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
             linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL|GFP_DMA, 0);
             if(unlikely(!linear_buffer_replace)) {
-                pr_err("MYNET:napi_alloc_frag failed\n");
+                pr_err("MYNET:%d:RX:napi_alloc_frag failed\n");
                 goto umask_and_ctl_run;
             }
             dma_addr = dma_map_single(&pdev->dev,
@@ -247,7 +248,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                                       MAX_RECV_LEN,
                                       DMA_TO_DEVICE);
             if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
-                pr_err("MYNET:dma_map_single  failed\n");
+                pr_err("MYNET:%d:RX:dma_map_single  failed\n");
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
                 goto umask_and_ctl_run;
             }
@@ -266,7 +267,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             //recv
             skb = napi_build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
             if (unlikely(!skb)) {
-                pr_err("MYNET:build_skb fail\n");
+                pr_err("MYNET:%d:RX:build_skb fail\n");
                 skb_free_frag(linear_buffer_recv);
                 //netdev->stats.rx_dropped++;
                 goto umask_and_ctl_run;
@@ -280,7 +281,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
 
             bytes += skb->len;
             ++done;
-            pr_err("MYNET:napi_gro_receive  skb\n");
+            pr_err("MYNET:%d:RX:napi_gro_receive  skb\n");
 
             napi_gro_receive(napi,skb);
 
@@ -364,6 +365,7 @@ static int mynet_probe(struct platform_device *dev)
         channel_info[i].tx_bytes = 0;
         channel_info[i].rx_packets = 0;
         channel_info[i].rx_bytes = 0;
+        channel_info[i].num=i;
     }
 
     //param check
