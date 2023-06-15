@@ -34,9 +34,9 @@ module_param(param_real_rx_channel_count, int, 0644);
 //static int param_watchdog_timeo = 5;/* In jiffies */
 //module_param(param_watchdog_timeo, int, 0);
 
-static int param_tx_ring_node_count = 4;
+static int param_tx_ring_node_count = 4096;
 module_param(param_tx_ring_node_count, int, 0644);
-static int param_rx_ring_node_count = 4;
+static int param_rx_ring_node_count = 4096;
 module_param(param_rx_ring_node_count, int, 0644);
 
 
@@ -93,11 +93,11 @@ int	mynet_open(struct net_device *netdev)
     for(int i=0; i < real_rx_channel_count; ++i) {
         //pr_err("MYNET:%d:RX set base:channel_info[i].rx_ring->dma_addr=0x%08x\n",i,channel_info[i].rx_ring->dma_addr);
         writel_relaxed(channel_info[i].rx_ring->dma_addr,         &channel_info[i].reg_base_channel->rx_ring_base);//set base
-        //pr_err("rx channel:%d set irq_flag",i);
+        //pr_err("rx channel:%d set irq_flag\n",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->rx_irq_flag);
-        //pr_err("rx channel:%d set irq_mask",i);
+        //pr_err("rx channel:%d set irq_mask\n",i);
         writel_relaxed(IRQF_RX_RECV,                              &channel_info[i].reg_base_channel->rx_irq_mask);//unmask IRQF_RX_RECV
-        //pr_err("rx channel:%d set ctl_status",i);
+        //pr_err("rx channel:%d set ctl_status\n",i);
         writel(1,                                                 &channel_info[i].reg_base_channel->rx_ctl_status);//start
     }
     
@@ -105,11 +105,11 @@ int	mynet_open(struct net_device *netdev)
     for(int i=0; i < real_tx_channel_count; ++i) {
         //pr_err("MYNET:%d:TX set base:channel_info[i].tx_ring_full->dma_addr=0x%08x\n",i,channel_info[i].tx_ring_full->dma_addr);
         writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
-        //pr_err("tx channel:%d set irq_flag",i);
+        //pr_err("tx channel:%d set irq_flag\n",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->tx_irq_flag);
-        //pr_err("tx channel:%d set irq_mask",i);
+        //pr_err("tx channel:%d set irq_mask\n",i);
         writel_relaxed(IRQF_TX_SEND,                               &channel_info[i].reg_base_channel->tx_irq_mask);//unmask IRQF_TX_SEND
-        //pr_err("tx channel:%d set ctl_status",i);
+        //pr_err("tx channel:%d set ctl_status\n",i);
         writel(1,                                                 &channel_info[i].reg_base_channel->tx_ctl_status);//start
     }
 
@@ -145,24 +145,29 @@ uint32_t xmit_flag=0xf;
 netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
 {
     int ret;
-
-    if(0x0f != READ_ONCE(xmit_flag)){
-        pr_err("multi cpus run mynet_xmit at the same time");
-    }
-
-    WRITE_ONCE(xmit_flag, smp_processor_id());
+    //u32 processor_id = smp_processor_id();
     u16 channelIndex = skb_get_queue_mapping(skb);
+
+
+    //pr_err("smp_processor_id=%d  qdisc_id=%d\n",processor_id,channelIndex);
+    //if(0x0f != READ_ONCE(xmit_flag)){
+    //    pr_err("multi cpus run mynet_xmit at the same time\n");
+    //}
+
+    //WRITE_ONCE(xmit_flag, processor_id);
+    
     ret = insert_skb_to_tx_ring(&channel_info[channelIndex],skb);
     
 
     if(ret) {
+        //pr_err("smp_processor_id=%d  qdisc_id=%d  insert_skb_to_tx_ring failed\n",processor_id,channelIndex);
         netif_tx_stop_queue(netdev_get_tx_queue(netdev, channelIndex));
-        WRITE_ONCE(xmit_flag, 0xf);
+        //WRITE_ONCE(xmit_flag, 0xf);
         return NETDEV_TX_BUSY;
     }
 
     //start tx anyway
-    writel_relaxed(1, &channel_info[channelIndex].reg_base_channel->tx_ctl_status);
+    writel(1, &channel_info[channelIndex].reg_base_channel->tx_ctl_status);
    /*uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
     if(flag & IRQF_TX_EMPTY) {
         flag &= ~IRQF_TX_EMPTY;//clear TX_EMPTY flag
@@ -170,7 +175,8 @@ netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
         wmb();
         writel_relaxed(1,&channel->reg_base_channel->tx_ctl_status);//restart tx
     }*/
-    WRITE_ONCE(xmit_flag, 0xf);
+    //pr_err("smp_processor_id=%d  qdisc_id=%d  insert_skb_to_tx_ring OK\n",processor_id,channelIndex);
+    //WRITE_ONCE(xmit_flag, 0xf);
     return NETDEV_TX_OK;
 }
 static const struct net_device_ops mynet_netdev_ops = {
@@ -189,14 +195,14 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
 {
     struct channel_data * channel = container_of(napi, struct channel_data, napi_tx);
     int done=0,bytes = 0;
-    int format_error = 1;
+    //int format_error = 1;
     u16 channelIndex;
-    //pr_err("MYNET:mynet_poll_tx:channel=%p\n",channel);
+    //pr_err("MYNET:mynet_poll_tx:channel=%d\n",channel->num);
     //spin_lock(&channel->spinlock_tx_ring_full);
     while(budget > done) {
-        if(channel->tx_ring_full==channel->tx_ring_empty) {
+        if(channel->tx_ring_full==READ_ONCE(channel->tx_ring_empty)) {
             //pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
-            //        "there is no data in tx ting");
+            //        "there is no data in tx ting\n");
             break;
         }
         if(is_node_belong_to_hw(channel->tx_ring_full)) {
@@ -213,28 +219,25 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
             channelIndex = skb_get_queue_mapping(channel->tx_ring_full->skb);
 
             napi_consume_skb(channel->tx_ring_full->skb,budget);
-            
+            WRITE_ONCE(channel->tx_ring_full, channel->tx_ring_full->next);
             netif_tx_wake_queue(netdev_get_tx_queue(netdev,channelIndex));//wake up queue anyway
             ++done;
-            format_error=0;
-        } else {
-            format_error=1;
-        }
-        channel->tx_ring_full = channel->tx_ring_full->next;
+            continue;
+            //format_error=0;
+        } //else {
+        //    format_error=1;
+        //}
+        WRITE_ONCE(channel->tx_ring_full, channel->tx_ring_full->next);
     }
-    //spin_unlock(&channel->spinlock_tx_ring_full);
-
-    BUG_ON(format_error);//unknown format_error,tx ring data was damaged
-
-    napi_complete_done(napi,done);
     channel->tx_packets += done;
     channel->tx_bytes += bytes;
+    if(done==budget) {
+        return budget;
+    }
+    if(napi_complete_done(napi,done)) {
+        writel(IRQF_TX_SEND, &channel->reg_base_channel->tx_irq_mask);//unmask IRQF_TX_SEND
+    }
 
-    //clear all tx irq flag
-    writel_relaxed(0, &channel->reg_base_channel->tx_irq_flag);
-
-    //unmask IRQF_TX_SEND
-    writel(IRQF_TX_SEND, &channel->reg_base_channel->tx_irq_mask);
     return done;
 }
 static int mynet_poll_rx(struct napi_struct *napi, int budget)
@@ -285,9 +288,10 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             channel->rx_ring->linear_buffer = linear_buffer_replace;
             writel_relaxed(dma_addr,                        &channel->rx_ring->virtual_addr->base);
             writel_relaxed(MAX_RECV_LEN,                    &channel->rx_ring->virtual_addr->len);
-            writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &channel->rx_ring->virtual_addr->flag);
+            writel(NODE_F_TRANSFER|NODE_F_BELONG,   &channel->rx_ring->virtual_addr->flag);
             channel->rx_ring = channel->rx_ring->next;
-
+            //start rx anyway no mater hw rx thread is run
+            writel(1,  &channel->reg_base_channel->rx_ctl_status);
 
             //recv
             skb = napi_build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
@@ -319,27 +323,24 @@ CHECKSUM_PARTIAL：L4软件计算了伪报头的校验和，并且将值保存�
             ++done;
 
 
-            //pr_err("MYNET:RX:SKB:buflen=%d recv_bytes=%d\n,len=%d", MAX_RECV_LEN ,recv_bytes,skb->len);
+            //pr_err("MYNET:RX:SKB:buflen=%d recv_bytes=%d,len=%d\n", MAX_RECV_LEN ,recv_bytes,skb->len);
             //for(int i=0;i<skb->len;++i) {
-            //    pr_err(" 0x%02hhx", *((char*)linear_buffer_recv + ETH_HEADER_OFFSET_IN_LINEAR_BUFF + i) );
+            //    pr_err(" 0x%02hhx\n", *((char*)linear_buffer_recv + ETH_HEADER_OFFSET_IN_LINEAR_BUFF + i) );
             //}
             napi_gro_receive(napi,skb);
         //}
     }
 
-    napi_complete_done(napi,done);
-
     channel->rx_packets += done;
     channel->rx_bytes += bytes;
 
-    //clear all flag
-    writel_relaxed(0, &channel->reg_base_channel->rx_irq_flag);
+    if(done==budget) {
+        return budget;
+    }
 
-    //umask IRQF_RX_RECV
-    writel(IRQF_RX_RECV,  &channel->reg_base_channel->rx_irq_mask);
-
-    //start rx anyway no mater hw rx thread is run
-    writel_relaxed(1,  &channel->reg_base_channel->rx_ctl_status);
+    if(napi_complete_done(napi,done)) {
+        writel(IRQF_RX_RECV,  &channel->reg_base_channel->rx_irq_mask);//umask IRQF_RX_RECV
+    }
 
     return done;
 }

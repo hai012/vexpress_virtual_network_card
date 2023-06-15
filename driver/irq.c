@@ -27,7 +27,8 @@ irqreturn_t irq_handler_tx(int irq, void *data)
     }*/
     BUG_ON(flag & IRQF_TX_ERR);
     //printk("MYNET:irq_handler_tx:clear flag\n");
-    
+    //clear all tx irq flag
+    writel(0, &channel->reg_base_channel->tx_irq_flag);
     return IRQ_HANDLED;
 }
 irqreturn_t irq_handler_rx(int irq, void *data)
@@ -46,15 +47,17 @@ irqreturn_t irq_handler_rx(int irq, void *data)
     }
     /*if(flag & IRQF_RX_FULL) {
 
-        flag &= ~IRQF_RX_FULL;//clear irq flag
+ 
     }
     if(flag & IRQF_RX_ERR) {
 
-        flag &= ~IRQF_RX_ERR;//clear irq flag
+
     }*/
     //printk("MYNET:rxirq:w:0x%04x\n",flag);
     BUG_ON(flag & IRQF_RX_ERR);
-    //writel(flag, &channel->reg_base_channel->rx_irq_flag);
+
+    //clear all irq flag
+    writel(0, &channel->reg_base_channel->rx_irq_flag);
     return IRQ_HANDLED;
 }
 const char * irq_name_rx[] = {

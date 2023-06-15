@@ -47,12 +47,12 @@ int ring_init(void)
 
     ring_node_info_table = devm_kcalloc(&pdev->dev,node_count,sizeof(struct ring_node_info),GFP_KERNEL);
     if(unlikely(!ring_node_info_table)) {
-        pr_err("%s:alloc  ring_node_info_table failed",__func__);
+        pr_err("%s:alloc  ring_node_info_table failed\n",__func__);
         return -ENOMEM;
     }
     pool = dmam_pool_create(pdev->name,&pdev->dev, sizeof(struct ring_node_t),4,0);
     if(unlikely(!pool)) {
-        pr_err("%s:dma_pool_create failed",__func__);
+        pr_err("%s:dma_pool_create failed\n",__func__);
         kfree(ring_node_info_table);
         return -ENOMEM;
     }
@@ -96,7 +96,7 @@ int ring_init(void)
     //dump_ring();
 
     if(unlikely(rx_ring_dma_init())) {
-        pr_err("%s:fail to alloc and map skb for rx_ring",__func__);
+        pr_err("%s:fail to alloc and map skb for rx_ring\n",__func__);
         goto err_out;
     }
     
@@ -148,7 +148,7 @@ int rx_ring_dma_init(void)
             //pr_err("channelIndex=%d,MAX_RX_SKB_LINEAR_BUFF_LEN=%d\n",channelIndex,MAX_RX_SKB_LINEAR_BUFF_LEN);
             char *liner_buffer = page_frag_alloc_align(&channel_info[channelIndex].page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL|GFP_DMA, 0);
             if(unlikely(!liner_buffer)) {
-                pr_err("netdev_alloc_frag failed");
+                pr_err("netdev_alloc_frag failed\n");
                 goto err_clean_previous;
             }
             dma_addr = dma_map_single(&pdev->dev,
@@ -156,7 +156,7 @@ int rx_ring_dma_init(void)
                                                  MAX_RECV_LEN,
                                                  DMA_TO_DEVICE);
             if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
-                pr_err("dma_map_single dma_dst_addr failed");
+                pr_err("dma_map_single dma_dst_addr failed\n");
                 skb_free_frag(liner_buffer);  //page_frag_free
                 goto err_clean_previous;
             }
@@ -165,7 +165,7 @@ int rx_ring_dma_init(void)
             init_start->linear_buffer = liner_buffer;
             writel_relaxed(dma_addr,                        &init_start->virtual_addr->base);
             writel_relaxed(MAX_RECV_LEN,                    &init_start->virtual_addr->len);
-            writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &init_start->virtual_addr->flag);
+            writel(NODE_F_TRANSFER|NODE_F_BELONG,   &init_start->virtual_addr->flag);
             //init_start->virtual_addr->base = dma_addr;
             //init_start->virtual_addr->len = MAX_RECV_LEN;
             //init_start->virtual_addr->flag = NODE_F_TRANSFER|NODE_F_BELONG;
@@ -231,7 +231,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     //spin_lock(&channel->spinlock_tx_ring_empty);
     nodes_need = num_dma_bufs;
     for(struct ring_node_info *node=channel->tx_ring_empty;
-        node->next != channel->tx_ring_full;
+        node->next != READ_ONCE(channel->tx_ring_full);
         node=node->next) {
             if(nodes_need--)
                 break;
@@ -250,23 +250,18 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
         writel_relaxed(sg_dma_len(crt_scl), &fill->virtual_addr->len);
         fill = fill -> next;
     }
-    if(num_dma_bufs==1) {
-        node_table[0]->skb = skb;
-        node_table[0]->scl = scl;
-        node_table[0]->num_sg = num_sg;
-        writel(NODE_F_TRANSFER|NODE_F_BELONG, &node_table[0]->virtual_addr->flag);
-    } else {
-        node_table[num_dma_bufs-1]->skb = skb;
-        node_table[num_dma_bufs-1]->scl = scl;
-        node_table[num_dma_bufs-1]->num_sg = num_sg;
-        writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG, &node_table[num_dma_bufs-1]->virtual_addr->flag);
-        for (int i=num_dma_bufs-2; i>0; ++i) {
-            writel_relaxed(NODE_F_BELONG, &node_table[i]->virtual_addr->flag);
-        }
-        writel(NODE_F_BELONG, &node_table[0]->virtual_addr->flag);
+
+
+    //start fill flag
+    node_table[num_dma_bufs-1]->skb = skb;
+    node_table[num_dma_bufs-1]->scl = scl;
+    node_table[num_dma_bufs-1]->num_sg = num_sg;
+    writel(NODE_F_TRANSFER|NODE_F_BELONG, &node_table[num_dma_bufs-1]->virtual_addr->flag);
+    for (int i=num_dma_bufs-2; i>=0; --i) {
+        writel(NODE_F_BELONG, &node_table[i]->virtual_addr->flag);
     }
 
-    channel->tx_ring_empty = fill;
+    WRITE_ONCE(channel->tx_ring_empty ,fill);
     //spin_unlock(&channel->spinlock_tx_ring_empty);
 
     return 0;
@@ -299,7 +294,7 @@ void ring_deinit()
                              deinit_start->virtual_addr->len,
                              DMA_FROM_DEVICE);
             skb_free_frag(deinit_start->linear_buffer);
-            //pr_err("RXdeinit:0x%08x 0x%08x 0x%08x",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
+            //pr_err("RXdeinit:0x%08x 0x%08x 0x%08x\n",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
             dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
             deinit_start = deinit_start->next;
         }while(deinit_start != deinit_end);
@@ -315,14 +310,14 @@ void ring_deinit()
                 devm_kfree(&pdev->dev,deinit_start->scl);
                 kfree_skb(deinit_start->skb);
             }
-            //pr_err("TXdeinit1:0x%08x 0x%08x 0x%08x",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
+            //pr_err("TXdeinit1:0x%08x 0x%08x 0x%08x\n",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
             dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
             deinit_start = deinit_start->next;
         }
         deinit_start = channel_info[channelIndex].tx_ring_empty;
         deinit_end = channel_info[channelIndex].tx_ring_full;
         do {
-            //pr_err("TXdeinit2:0x%08x 0x%08x 0x%08x",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
+            //pr_err("TXdeinit2:0x%08x 0x%08x 0x%08x\n",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
             dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
             deinit_start = deinit_start->next;
         } while(deinit_start != deinit_end);
