@@ -11,6 +11,32 @@
 static struct dma_pool * pool;
 static struct ring_node_info *ring_node_info_table;
 
+void dump_ring(void);
+void dump_ring(void)
+{
+    struct ring_node_info *ptr;
+    pr_err("\n\n\n\n\n");
+    for(int i=0; i< real_tx_channel_count; ++i) {
+        ptr = ring_node_info_table + i * tx_ring_node_count;
+        for(int j=0; j< tx_ring_node_count; ++j) {
+            pr_err("MYNET:%d:TX:ring_node info_kva=0x%08x info_next=0x%08x node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
+                        i,(uint32_t)(ptr+j),(uint32_t)(ptr+j)->next,
+                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
+                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
+                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
+        }
+    }
+    for(int i=0; i< real_rx_channel_count; ++i) {
+        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count + i * rx_ring_node_count;
+        for(int j=0; j< rx_ring_node_count; ++j) {
+            pr_err("MYNET:%d:RX:ring_node info_kva=0x%08x info_next=0x%08x node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
+                        i,(uint32_t)(ptr+j),(uint32_t)(ptr+j)->next,
+                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
+                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
+                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
+        }
+    }
+}
 
 int ring_init(void)
 {
@@ -67,52 +93,15 @@ int ring_init(void)
         channel_info[i].rx_ring = ptr;
     }
 
-    for(int i=0; i< real_tx_channel_count; ++i) {
-        ptr = ring_node_info_table + i * tx_ring_node_count;
-        for(int j=0; j< tx_ring_node_count; ++j) {
-            pr_err("MYNET:%d:TX:ring_node node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
-                        i,
-                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
-                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
-                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
-        }
-    }
-    for(int i=0; i< real_rx_channel_count; ++i) {
-        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count + i * rx_ring_node_count;
-        for(int j=0; j< rx_ring_node_count; ++j) {
-            pr_err("MYNET:%d:RX:ring_node node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
-                        i,
-                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
-                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
-                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
-        }
-    }
+    //dump_ring();
 
     if(unlikely(rx_ring_dma_init())) {
         pr_err("%s:fail to alloc and map skb for rx_ring",__func__);
         goto err_out;
     }
-    pr_err("\n\n\n\n\n");
-    for(int i=0; i< real_tx_channel_count; ++i) {
-        ptr = ring_node_info_table + i * tx_ring_node_count;
-        for(int j=0; j< tx_ring_node_count; ++j) {
-            pr_err("MYNET:%d:TX:ring_node node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
-                        i,
-                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
-                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
-                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
-        }
-    }
-    for(int i=0; i< real_rx_channel_count; ++i) {
-        ptr = ring_node_info_table + real_tx_channel_count * tx_ring_node_count + i * rx_ring_node_count;
-        for(int j=0; j< rx_ring_node_count; ++j) {
-            pr_err("MYNET:%d:RX:ring_node node_base_kva=0x%08x node_base_phy=0x%08x flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",
-                        i,
-                        (uint32_t)(ptr+j)->virtual_addr,        (ptr+j)->dma_addr,
-                        (ptr+j)->virtual_addr->flag,  (ptr+j)->virtual_addr->base,
-                        (ptr+j)->virtual_addr->len,   (ptr+j)->virtual_addr->next);
-        }
-    }
+    
+    //dump_ring();
+
 
     return 0;
 
@@ -297,6 +286,11 @@ void ring_deinit()
     struct ring_node_info * deinit_start;
     struct ring_node_info * deinit_end;
 
+
+    //dump_ring();
+
+
+
     for(channelIndex=0; channelIndex<real_rx_channel_count; ++channelIndex) {
         deinit_start = deinit_end =  channel_info[channelIndex].rx_ring;
         do{
@@ -305,9 +299,12 @@ void ring_deinit()
                              deinit_start->virtual_addr->len,
                              DMA_FROM_DEVICE);
             skb_free_frag(deinit_start->linear_buffer);
+            //pr_err("RXdeinit:0x%08x 0x%08x 0x%08x",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
             dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
             deinit_start = deinit_start->next;
         }while(deinit_start != deinit_end);
+
+
 
         deinit_start = channel_info[channelIndex].tx_ring_full;
         deinit_end = channel_info[channelIndex].tx_ring_empty;
@@ -317,10 +314,18 @@ void ring_deinit()
                 dma_unmap_sg(&pdev->dev, deinit_start->scl, deinit_start->num_sg, DMA_FROM_DEVICE);
                 devm_kfree(&pdev->dev,deinit_start->scl);
                 kfree_skb(deinit_start->skb);
-                dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
             }
+            //pr_err("TXdeinit1:0x%08x 0x%08x 0x%08x",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
+            dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
             deinit_start = deinit_start->next;
         }
+        deinit_start = channel_info[channelIndex].tx_ring_empty;
+        deinit_end = channel_info[channelIndex].tx_ring_full;
+        do {
+            //pr_err("TXdeinit2:0x%08x 0x%08x 0x%08x",(uint32_t)deinit_start,(uint32_t)deinit_start->virtual_addr,(uint32_t)deinit_start->dma_addr);
+            dma_pool_free(pool, deinit_start->virtual_addr, deinit_start->dma_addr);
+            deinit_start = deinit_start->next;
+        } while(deinit_start != deinit_end);
     }
 
     dmam_pool_destroy(pool);

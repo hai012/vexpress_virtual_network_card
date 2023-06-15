@@ -60,7 +60,7 @@ struct channel_data channel_info[MAX_CHANNEL_NUM];
 
 int	mynet_open(struct net_device *netdev)
 {
-    pr_err("mynet_open:hw_init\n");
+    //pr_err("mynet_open:hw_init\n");
     for(int i=0; i < MAX_CHANNEL_NUM; ++i) {
         writel_relaxed(0, &channel_info[i].reg_base_channel->tx_ctl_status);
         writel_relaxed(0, &channel_info[i].reg_base_channel->rx_ctl_status);
@@ -73,7 +73,7 @@ int	mynet_open(struct net_device *netdev)
         writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_mask  );
     }
 
-    pr_err("mynet_open:ring_init\n");
+    //pr_err("mynet_open:ring_init\n");
     if(ring_init()){
         return -1;
     }
@@ -89,9 +89,9 @@ int	mynet_open(struct net_device *netdev)
         return -1;
     }
 
-    pr_err("hw_start_real_channel\n");
+    //pr_err("hw_start_real_channel\n");
     for(int i=0; i < real_rx_channel_count; ++i) {
-        pr_err("MYNET:%d:RX set base:channel_info[i].rx_ring->dma_addr=0x%08x\n",i,channel_info[i].rx_ring->dma_addr);
+        //pr_err("MYNET:%d:RX set base:channel_info[i].rx_ring->dma_addr=0x%08x\n",i,channel_info[i].rx_ring->dma_addr);
         writel_relaxed(channel_info[i].rx_ring->dma_addr,         &channel_info[i].reg_base_channel->rx_ring_base);//set base
         //pr_err("rx channel:%d set irq_flag",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->rx_irq_flag);
@@ -103,7 +103,7 @@ int	mynet_open(struct net_device *netdev)
     
 
     for(int i=0; i < real_tx_channel_count; ++i) {
-        pr_err("MYNET:%d:TX set base:channel_info[i].tx_ring_full->dma_addr=0x%08x\n",i,channel_info[i].tx_ring_full->dma_addr);
+        //pr_err("MYNET:%d:TX set base:channel_info[i].tx_ring_full->dma_addr=0x%08x\n",i,channel_info[i].tx_ring_full->dma_addr);
         writel_relaxed(channel_info[i].tx_ring_full->dma_addr,    &channel_info[i].reg_base_channel->tx_ring_base);//set base
         //pr_err("tx channel:%d set irq_flag",i);
         writel_relaxed(0,                                         &channel_info[i].reg_base_channel->tx_irq_flag);
@@ -114,7 +114,7 @@ int	mynet_open(struct net_device *netdev)
     }
 
     netif_tx_start_all_queues(netdev);
-    pr_err("mynet_open:return\n");
+    //pr_err("mynet_open:return\n");
     return 0;
 }
 int	mynet_stop(struct net_device *netdev)
@@ -126,16 +126,38 @@ int	mynet_stop(struct net_device *netdev)
     for(int i=0; i < real_rx_channel_count; ++i) {
         napi_disable(&channel_info[i].napi_rx);
     }
-    ring_deinit();
     unregister_irq();
-    //hw_deinit(netdev);
+    ring_deinit();
+    for(int i=0; i < MAX_CHANNEL_NUM; ++i) {
+        writel_relaxed(0, &channel_info[i].reg_base_channel->tx_ctl_status);
+        writel_relaxed(0, &channel_info[i].reg_base_channel->rx_ctl_status);
+        wmb();
+        writel_relaxed(0, &channel_info[i].reg_base_channel->tx_ring_base );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->tx_irq_flag  );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->tx_irq_mask  );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->rx_ring_base );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_flag  );
+        writel_relaxed(0, &channel_info[i].reg_base_channel->rx_irq_mask  );
+    }
     return 0;
 }
+uint32_t xmit_flag=0xf;
 netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
 {
+    int ret;
+
+    if(0x0f != READ_ONCE(xmit_flag)){
+        pr_err("multi cpus run mynet_xmit at the same time");
+    }
+
+    WRITE_ONCE(xmit_flag, smp_processor_id());
     u16 channelIndex = skb_get_queue_mapping(skb);
-    if(insert_skb_to_tx_ring(&channel_info[channelIndex],skb)) {
+    ret = insert_skb_to_tx_ring(&channel_info[channelIndex],skb);
+    
+
+    if(ret) {
         netif_tx_stop_queue(netdev_get_tx_queue(netdev, channelIndex));
+        WRITE_ONCE(xmit_flag, 0xf);
         return NETDEV_TX_BUSY;
     }
 
@@ -148,6 +170,7 @@ netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
         wmb();
         writel_relaxed(1,&channel->reg_base_channel->tx_ctl_status);//restart tx
     }*/
+    WRITE_ONCE(xmit_flag, 0xf);
     return NETDEV_TX_OK;
 }
 static const struct net_device_ops mynet_netdev_ops = {
@@ -167,26 +190,31 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     struct channel_data * channel = container_of(napi, struct channel_data, napi_tx);
     int done=0,bytes = 0;
     int format_error = 1;
-    pr_err("MYNET:mynet_poll_tx:channel=%p\n",channel);
+    u16 channelIndex;
+    //pr_err("MYNET:mynet_poll_tx:channel=%p\n",channel);
     //spin_lock(&channel->spinlock_tx_ring_full);
     while(budget > done) {
         if(channel->tx_ring_full==channel->tx_ring_empty) {
-            pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
-                    "there is no data in tx ting");
+            //pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
+            //        "there is no data in tx ting");
             break;
         }
         if(is_node_belong_to_hw(channel->tx_ring_full)) {
-            pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
-                  "there is data in tx ting, but wait for hw send data\n");
+            //pr_err("MYNET:mynet_poll_tx:don't have skb to release,"
+            //      "there is data in tx ting, but wait for hw send data\n");
             break;
         }
         if(is_node_transfer(channel->tx_ring_full)) {
-            pr_err("MYNET:mynet_poll_tx:find the last frag,and consume skb\n");
+            //pr_err("MYNET:mynet_poll_tx:find the last frag,and consume skb\n");
             dma_unmap_sg(&pdev->dev, channel->tx_ring_full->scl, channel->tx_ring_full->num_sg, DMA_FROM_DEVICE);
             devm_kfree(&pdev->dev,channel->tx_ring_full->scl);
-            //kfree_skb(channel->tx_ring_full->skb);
             bytes += channel->tx_ring_full->skb->len;
+
+            channelIndex = skb_get_queue_mapping(channel->tx_ring_full->skb);
+
             napi_consume_skb(channel->tx_ring_full->skb,budget);
+            
+            netif_tx_wake_queue(netdev_get_tx_queue(netdev,channelIndex));//wake up queue anyway
             ++done;
             format_error=0;
         } else {
@@ -196,30 +224,23 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     }
     //spin_unlock(&channel->spinlock_tx_ring_full);
 
-    BUG_ON(format_error);//unknown error,tx ring data was damaged
-
+    BUG_ON(format_error);//unknown format_error,tx ring data was damaged
 
     napi_complete_done(napi,done);
-
     channel->tx_packets += done;
     channel->tx_bytes += bytes;
 
-
-    //wake up queue anyway
-    netif_tx_wake_queue(netdev_get_tx_queue(netdev,channel->queue_index));
+    //clear all tx irq flag
+    writel_relaxed(0, &channel->reg_base_channel->tx_irq_flag);
 
     //unmask IRQF_TX_SEND
-    //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
-    //mask |= IRQF_TX_SEND;
-    printk("MYNET:mynet_poll_tx:unmask IRQF_TX_SEND\n");
-    writel_relaxed(IRQF_TX_SEND, &channel->reg_base_channel->tx_irq_mask);
+    writel(IRQF_TX_SEND, &channel->reg_base_channel->tx_irq_mask);
     return done;
 }
 static int mynet_poll_rx(struct napi_struct *napi, int budget)
 {
     struct channel_data * channel = container_of(napi, struct channel_data, napi_rx);
     int done=0, bytes = 0;
-    int format_error=1;
     char *linear_buffer_replace;
     char *linear_buffer_recv;
     dma_addr_t dma_addr;
@@ -228,11 +249,11 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     
     while(budget>done)
     {
-        pr_err("MYNET:%d:RX:mynet_poll_rx done=%d budget=%d\n",channel->num,done,budget);
+        //pr_err("MYNET:%d:RX:mynet_poll_rx done=%d budget=%d\n",channel->num,done,budget);
         //if(is_node_transfer(channel->tx_ring_full)) {
             if(is_node_belong_to_hw(channel->rx_ring)) {
                 //now, there is no linear_buffer to receive
-                pr_err("MYNET:%d:RX:now, there is no linear_buffer to receive\n",channel->num);
+                //pr_err("MYNET:%d:RX:now, there is no linear_buffer to receive\n",channel->num);
                 break;
             }
 
@@ -250,7 +271,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL|GFP_DMA, 0);
             if(unlikely(!linear_buffer_replace)) {
                 pr_err("MYNET:%d:RX:napi_alloc_frag failed\n",channel->num);
-                goto umask_and_ctl_run;
+                break;
             }
             dma_addr = dma_map_single(&pdev->dev,
                                       linear_buffer_replace + ETH_HEADER_OFFSET_IN_LINEAR_BUFF,
@@ -259,7 +280,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
                 pr_err("MYNET:%d:RX:dma_map_single  failed\n",channel->num);
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
-                goto umask_and_ctl_run;
+                break;
             }
             channel->rx_ring->linear_buffer = linear_buffer_replace;
             writel_relaxed(dma_addr,                        &channel->rx_ring->virtual_addr->base);
@@ -274,7 +295,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 pr_err("MYNET:%d:RX:build_skb fail\n",channel->num);
                 skb_free_frag(linear_buffer_recv);
                 //netdev->stats.rx_dropped++;
-                goto umask_and_ctl_run;
+                break;
             }
             skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
             skb_record_rx_queue(skb,channel->queue_index);
@@ -298,33 +319,29 @@ CHECKSUM_PARTIAL：L4软件计算了伪报头的校验和，并且将值保存�
             ++done;
 
 
-            pr_err("MYNET:RX:SKB:buflen=%d recv_bytes=%d\n,len=%d", MAX_RECV_LEN ,recv_bytes,skb->len);
-            for(int i=0;i<skb->len;++i) {
-                pr_err(" 0x%02hhx", *((char*)linear_buffer_recv + ETH_HEADER_OFFSET_IN_LINEAR_BUFF + i) );
-            }
+            //pr_err("MYNET:RX:SKB:buflen=%d recv_bytes=%d\n,len=%d", MAX_RECV_LEN ,recv_bytes,skb->len);
+            //for(int i=0;i<skb->len;++i) {
+            //    pr_err(" 0x%02hhx", *((char*)linear_buffer_recv + ETH_HEADER_OFFSET_IN_LINEAR_BUFF + i) );
+            //}
             napi_gro_receive(napi,skb);
-
-            format_error = 0;
         //}
     }
-
-    BUG_ON(format_error);
 
     napi_complete_done(napi,done);
 
     channel->rx_packets += done;
     channel->rx_bytes += bytes;
 
-umask_and_ctl_run:
-    //unmask IRQF_TX_IRQF_RX_RECVSEND
-    //uini32_t mask = readl_relaxed(&channel->reg_base_channel->rx_irq_mask);
-    //mask |= IRQF_RX_RECV;
-    writel_relaxed(IRQF_RX_RECV,  &channel->reg_base_channel->rx_irq_mask);
+    //clear all flag
+    writel_relaxed(0, &channel->reg_base_channel->rx_irq_flag);
+
+    //umask IRQF_RX_RECV
+    writel(IRQF_RX_RECV,  &channel->reg_base_channel->rx_irq_mask);
+
     //start rx anyway no mater hw rx thread is run
     writel_relaxed(1,  &channel->reg_base_channel->rx_ctl_status);
 
     return done;
-
 }
 
 static int mynet_probe(struct platform_device *dev)
@@ -425,7 +442,8 @@ static int mynet_probe(struct platform_device *dev)
 NETIF_F_NO_CSUM	4	网络设备的传输非常可靠，无需L4执行任何校验，环回设备一般设置该标记
 NETIF_F_HW_CSUM	8	网络设备可以对任何L4协议的数据包进行校验，基本很少有硬件能够实现
 NETIF_F_IPV6_CSUM	16	网络设备可以对基于IPv6的TCP和UDP数据包进行校验，其它协议报文不支持*/
-	netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO| NETIF_F_SG;//hardware doesn't support checksum ,calc it by software when GSO segment
+	//netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO| NETIF_F_SG;//hardware doesn't support checksum ,calc it by software when GSO segment
+    netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO;
     if(register_netdev(netdev)) {
         pr_err("%s: fail to register netdev\n",__func__);
         free_netdev(netdev);

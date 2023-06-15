@@ -139,11 +139,11 @@ static int tap_write(int fd,struct ring_node_t *node_table,uint32_t frag_count)
             return -1;
         }
 
-        printf("QEMU:TX:FRAG:");
+        /*printf("QEMU:TX:FRAG:");
         for(int i=0;i<node_table[index].len;++i) {
             printf(" 0x%02hhx", *((char*)iov[index].iov_base + i) );
         }
-        printf("\n");
+        printf("\n");*/
 
         iov[index].iov_len = (size_t)node_table[index].len;
         all_len += node_table[index].len;
@@ -250,11 +250,11 @@ static ssize_t tap_read(int fd,struct ring_node_t *ring_node_ptr)
         return -1;
     }
 
-    printf("QEMU:RX:FRAG:buflen=%ld recv_bytes=%ld\n",frag_len, ret);
+    /*printf("QEMU:RX:FRAG:buflen=%ld recv_bytes=%ld\n",frag_len, ret);
     for(int i=0;i<ret;++i) {
         printf(" 0x%02hhx", *((char*)buf + i) );
     }
-    printf("\n");
+    printf("\n");*/
 
     cpu_physical_memory_unmap(buf, ring_node_ptr->len,1,ring_node_ptr->len);
 
@@ -279,16 +279,16 @@ wait_ctl_run:
             RX_IF_NEED_IRQ(IRQF_RX_ERR);
             continue;
         }
-        printf("QEMU:%d:RX:BASE:rx_ring_node info:flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",msc->num,ring_node.flag,ring_node.base,ring_node.len,ring_node.next);
+        //printf("QEMU:%d:RX:BASE:rx_ring_node info:flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",msc->num,ring_node.flag,ring_node.base,ring_node.len,ring_node.next);
         if(!(ring_node.flag & NODE_F_BELONG)) {
-            printf("QEMU:%d:RX:flag bit0== 0, belong to driver, rx ring buffer full\n",msc->num);
+            //printf("QEMU:%d:RX:flag bit0== 0, belong to driver, rx ring buffer full\n",msc->num);
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
             RX_IF_NEED_IRQ(IRQF_RX_FULL);
             continue;
         }
 
         for(;;) {
-            printf("QEMU:%d:RX:tap_read:flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",msc->num,ring_node.flag,ring_node.base,ring_node.len,ring_node.next);
+            //printf("QEMU:%d:RX:tap_read:flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",msc->num,ring_node.flag,ring_node.base,ring_node.len,ring_node.next);
             ret = tap_read(msc->tap_fd, &ring_node);
             if(ret <= 0) {
                 printf("QEMU:%d:RX:tap_read failed\n",msc->num);
@@ -322,9 +322,9 @@ wait_ctl_run:
                 RX_IF_NEED_IRQ(IRQF_RX_ERR);
                 goto wait_ctl_run;
             }
-            printf("QEMU:%d:RX:NEXT:ring_node info:flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",msc->num,ring_node.flag,ring_node.base,ring_node.len,ring_node.next);
+            //printf("QEMU:%d:RX:NEXT:ring_node info:flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",msc->num,ring_node.flag,ring_node.base,ring_node.len,ring_node.next);
             if(!(ring_node.flag & NODE_F_BELONG)) {
-                printf("QEMU:%d:RX:flag bit0== 0, belong to driver, rx ring buffer full\n",msc->num);
+                //printf("QEMU:%d:RX:flag bit0== 0, belong to driver, rx ring buffer full\n",msc->num);
                 RX_FLAG_MODIFY(CTL_FLAG_STOP);
                 RX_IF_NEED_IRQ(IRQF_RX_FULL|IRQF_RX_RECV);
                 goto wait_ctl_run;
@@ -345,13 +345,8 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
     case 0x00://tx ring phy base reg
         if(msc->reg.tx_ctl_status)
             return;
-        /*msc->tx_node_host = cpu_physical_memory_map(value,sizeof()
-        if(!msc->tx_node_host && value) {
-            printf("QEMU:channel_%d, parse tx_node_host failed, guest phy addr=0x%08lx\n",msc->num,value);
-            return;
-        }*/
         msc->reg.tx_ring_base = value;
-        printf("QEMU:%d:WRITE:TX tx_ring_node_base=0x%08x\n",msc->num,msc->reg.tx_ring_base);
+        //printf("QEMU:%d:WRITE:TX tx_ring_node_base=0x%08x\n",msc->num,msc->reg.tx_ring_base);
         break;
     case 0x04://ctl reg
         if(value==1 && msc->reg.tx_ctl_status==0) {
@@ -366,7 +361,7 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
         msc->reg.tx_irq_flag = (uint32_t) value & ALL_IRQF_TX;
         //printf("QEMU:%d:WRITE:TX IRQ flag,reg=0x%08x\n",msc->num,msc->reg.tx_irq_flag);
         if( !(msc->reg.tx_irq_flag & msc->reg.tx_irq_mask)) {
-            printf("QEMU:%d:WRITE:TX flag,clear tx irq,tx_irq_flag=0x%08x,tx_irq_mask=0x%08x\n",msc->num,   msc->reg.tx_irq_flag,   msc->reg.tx_irq_mask);
+            //printf("QEMU:%d:WRITE:TX flag,clear tx irq,tx_irq_flag=0x%08x,tx_irq_mask=0x%08x\n",msc->num,   msc->reg.tx_irq_flag,   msc->reg.tx_irq_mask);
             qemu_set_irq(msc->irq[CHANNEL_IRQ_TX], 0);
         }
         break;
@@ -374,7 +369,7 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
 		msc->reg.tx_irq_mask = (uint32_t)value & ALL_IRQF_TX;
         //printf("QEMU:%d:WRITE:TX IRQ mask,reg=0x%08x\n",msc->num,msc->reg.tx_irq_mask);
         if( !(msc->reg.tx_irq_flag & msc->reg.tx_irq_mask)) {
-            printf("QEMU:%d:WRITE:TX IRQ mask,clear tx irq,tx_irq_flag=0x%08x,tx_irq_mask=0x%08x\n",msc->num,msc->reg.tx_irq_flag,msc->reg.tx_irq_mask);
+            //printf("QEMU:%d:WRITE:TX IRQ mask,clear tx irq,tx_irq_flag=0x%08x,tx_irq_mask=0x%08x\n",msc->num,msc->reg.tx_irq_flag,msc->reg.tx_irq_mask);
             qemu_set_irq(msc->irq[CHANNEL_IRQ_TX], 0);
         }
         break;
@@ -382,28 +377,23 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
     case 0x10://rx ring phy base reg
         if(msc->reg.rx_ctl_status)
             return;
-        /*msc->rx_node_host = guest_to_host(value);
-        if(!msc->tx_node_host && value) {
-            printf("QEMU:channel_%d, parse rx_node_host failed, guest phy addr=0x%08lx\n",msc->num,value);
-            return;
-        }*/
         msc->reg.rx_ring_base = value;
-        printf("QEMU:%d:WRITE:RX rx_ring_node_base=0x%08x\n",msc->num,msc->reg.rx_ring_base);
+        //printf("QEMU:%d:WRITE:RX rx_ring_node_base=0x%08x\n",msc->num,msc->reg.rx_ring_base);
         break;
     case 0x14://ctl reg
         if(value==1 && msc->reg.rx_ctl_status==0) {
             RX_FLAG_MODIFY(CTL_FLAG_START);
             pthread_cond_signal(&msc->cond_rx);
         }
-        /*if(value==0 && msc->reg.rx_ctl_status==1) {
+        if(value==0 && msc->reg.rx_ctl_status==1) {
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
-        }*/
+        }
         break;
     case 0x18:
         msc->reg.rx_irq_flag = (uint32_t) value & ALL_IRQF_RX;
         //printf("QEMU:%d:WRITE:RX IRQ flag,reg=0x%08x\n",msc->num,msc->reg.tx_irq_mask);
         if(!( msc->reg.rx_irq_flag & msc->reg.rx_irq_mask)) {//0 mask, 1 ummask
-            printf("QEMU:%d:WRITE:RX flag,clear rx irq,rx_irq_flag=0x%08x,rx_irq_mask=0x%08x\n",msc->num,msc->reg.rx_irq_flag,msc->reg.rx_irq_mask);
+            //printf("QEMU:%d:WRITE:RX flag,clear rx irq,rx_irq_flag=0x%08x,rx_irq_mask=0x%08x\n",msc->num,msc->reg.rx_irq_flag,msc->reg.rx_irq_mask);
             qemu_set_irq(msc->irq[CHANNEL_IRQ_RX], 0);
         }
         break;
@@ -411,7 +401,7 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
 		msc->reg.rx_irq_mask = (uint32_t)(value) & ALL_IRQF_RX;//MAX_IRQ_NUM_PER_CHANNEL_RX bits
         //printf("QEMU:%d:WRITE:RX IRQ mask,reg=0x%08x\n",msc->num,msc->reg.tx_irq_mask);
         if( !(msc->reg.rx_irq_flag & msc->reg.rx_irq_mask)) {
-            printf("QEMU:%d:WRITE:RX mask,clear rx irq,rx_irq_flag=0x%08x,rx_irq_mask=0x%08x\n",msc->num,msc->reg.rx_irq_flag,msc->reg.rx_irq_mask);
+            //printf("QEMU:%d:WRITE:RX mask,clear rx irq,rx_irq_flag=0x%08x,rx_irq_mask=0x%08x\n",msc->num,msc->reg.rx_irq_flag,msc->reg.rx_irq_mask);
             qemu_set_irq(msc->irq[CHANNEL_IRQ_RX], 0);
         }
         break;

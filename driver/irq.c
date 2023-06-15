@@ -6,21 +6,17 @@ irqreturn_t irq_handler_tx(int irq, void *data)
 {
     struct channel_data * channel = (struct channel_data *)data;
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
-    printk("MYNET:tx_hw_irq,flag:0x%04x\n",flag);
+    //printk("MYNET:tx_hw_irq,flag:0x%04x\n",flag);
     if(likely(flag & IRQF_TX_SEND)) {
         //mask IRQF_TX_SEND;
         //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
         //mask &= ~IRQF_TX_SEND;
-
         if (likely(napi_schedule_prep(&channel->napi_tx))) {
             //printk("MYNET:tx_hw_irq,prep\n");
             __napi_schedule(&channel->napi_tx);
             writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);//mask IRQF_TX_SEND;
         }
-
-        flag &= ~IRQF_TX_SEND;//clear
     }
-
     /*if(flag & IRQF_TX_EMPTY) { 
         flag &= ~IRQF_TX_EMPTY;//clear
     }
@@ -30,26 +26,23 @@ irqreturn_t irq_handler_tx(int irq, void *data)
         //flag &= ~IRQF_TX_ERR;//clear
     }*/
     BUG_ON(flag & IRQF_TX_ERR);
-    printk("MYNET:irq_handler_tx:clear flag\n");
-    writel(flag, &channel->reg_base_channel->tx_irq_flag);
+    //printk("MYNET:irq_handler_tx:clear flag\n");
+    
     return IRQ_HANDLED;
 }
 irqreturn_t irq_handler_rx(int irq, void *data)
 {
     struct channel_data * channel = (struct channel_data *)data;
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->rx_irq_flag);
-    printk("MYNET:rx_hw_irq,flag:0x%08x\n",flag);
-    if(flag & IRQF_RX_RECV) {
+    //printk("MYNET:rx_hw_irq,flag:0x%08x\n",flag);
+    if(likely(flag & IRQF_RX_RECV)) {
         //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
         //mask &= ~IRQF_RX_RECV;
-
         if (likely(napi_schedule_prep(&channel->napi_rx))) {
             //printk("MYNET:rx_hw_irq,prep\n");
             __napi_schedule(&channel->napi_rx);
             writel_relaxed(0, &channel->reg_base_channel->rx_irq_mask);//mask IRQF_RX_RECV;
         }
-
-        flag &= ~IRQF_RX_RECV;//clear irq flag
     }
     /*if(flag & IRQF_RX_FULL) {
 
@@ -61,7 +54,7 @@ irqreturn_t irq_handler_rx(int irq, void *data)
     }*/
     //printk("MYNET:rxirq:w:0x%04x\n",flag);
     BUG_ON(flag & IRQF_RX_ERR);
-    writel(flag, &channel->reg_base_channel->rx_irq_flag);
+    //writel(flag, &channel->reg_base_channel->rx_irq_flag);
     return IRQ_HANDLED;
 }
 const char * irq_name_rx[] = {
