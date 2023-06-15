@@ -250,7 +250,7 @@ static ssize_t tap_read(int fd,struct ring_node_t *ring_node_ptr)
         return -1;
     }
 
-    printf("QEMU:RX:FRAG:");
+    printf("QEMU:RX:FRAG:buflen=%ld recv_bytes=%ld\n",frag_len, ret);
     for(int i=0;i<ret;++i) {
         printf(" 0x%02hhx", *((char*)buf + i) );
     }

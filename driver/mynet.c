@@ -224,7 +224,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     char *linear_buffer_recv;
     dma_addr_t dma_addr;
     struct sk_buff * skb;
-
+    uint32_t recv_bytes;
     
     while(budget>done)
     {
@@ -235,6 +235,15 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 pr_err("MYNET:%d:RX:now, there is no linear_buffer to receive\n",channel->num);
                 break;
             }
+
+            //save received page
+            dma_unmap_single(&pdev->dev,
+                            channel->rx_ring->virtual_addr->base,
+                            MAX_RECV_LEN,
+                            DMA_FROM_DEVICE);
+            linear_buffer_recv = channel->rx_ring->linear_buffer;
+            recv_bytes = channel->rx_ring->virtual_addr->len;
+
 
             //replace
             //char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
@@ -252,17 +261,12 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
                 goto umask_and_ctl_run;
             }
-            dma_unmap_single(&pdev->dev,
-                            channel->rx_ring->virtual_addr->base,
-                            channel->rx_ring->virtual_addr->len,
-                            DMA_FROM_DEVICE);
-            linear_buffer_recv = channel->rx_ring->linear_buffer;
-
             channel->rx_ring->linear_buffer = linear_buffer_replace;
             writel_relaxed(dma_addr,                        &channel->rx_ring->virtual_addr->base);
             writel_relaxed(MAX_RECV_LEN,                    &channel->rx_ring->virtual_addr->len);
             writel_relaxed(NODE_F_TRANSFER|NODE_F_BELONG,   &channel->rx_ring->virtual_addr->flag);
             channel->rx_ring = channel->rx_ring->next;
+
 
             //recv
             skb = napi_build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
@@ -272,10 +276,12 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                 //netdev->stats.rx_dropped++;
                 goto umask_and_ctl_run;
             }
-            //skb_mark_for_recycle(skb); see page_pool
             skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
             skb_record_rx_queue(skb,channel->queue_index);
             skb->dev = netdev;
+            skb_put(skb,recv_bytes);
+            //skb_mark_for_recycle(skb); see page_pool
+            
             /*接收过程中，ip_summed字段包含了网络设备硬件告诉L4软件当前校验和的状态，各值含义如下：
 CHECKSUM_NONE：硬件没有提供校验和，可能是硬件不支持，也可能是硬件校验出错但是并未丢弃数据包，这时L4软件需要自己进行校验和计算；
 CHECKSUM_UNNECESSARY：硬件已经进行了完整的校验，软件无需再进行检查。这时L4软件会跳过校验和检查；
@@ -290,8 +296,12 @@ CHECKSUM_PARTIAL：L4软件计算了伪报头的校验和，并且将值保存�
 
             bytes += skb->len;
             ++done;
-            pr_err("MYNET:%d:RX:napi_gro_receive  skb\n",channel->num);
 
+
+            pr_err("MYNET:RX:SKB:buflen=%d recv_bytes=%d\n,len=%d", MAX_RECV_LEN ,recv_bytes,skb->len);
+            for(int i=0;i<skb->len;++i) {
+                pr_err(" 0x%02hhx", *((char*)linear_buffer_recv + ETH_HEADER_OFFSET_IN_LINEAR_BUFF + i) );
+            }
             napi_gro_receive(napi,skb);
 
             format_error = 0;

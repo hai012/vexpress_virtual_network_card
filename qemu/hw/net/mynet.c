@@ -90,6 +90,7 @@ static void mynet_instance_init(Object *obj)
     }
     system("ifconfig tap0 hw ether a6:28:24:ef:20:76");
     system("ip addr add 192.168.0.1/24 dev tap0");
+    system("arp -s  192.168.0.33   52:54:00:12:34:33");
     system("ip link set dev tap0 up");
 }
 
