@@ -8,14 +8,11 @@ irqreturn_t irq_handler_tx(int irq, void *data)
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->tx_irq_flag);
     //printk("MYNET:tx_hw_irq,flag:0x%04x\n",flag);
     if(likely(flag & IRQF_TX_SEND)) {
-        //mask IRQF_TX_SEND;
+        //printk("MYNET:tx_hw_irq,prep\n");
         //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
         //mask &= ~IRQF_TX_SEND;
-        if (likely(napi_schedule_prep(&channel->napi_tx))) {
-            //printk("MYNET:tx_hw_irq,prep\n");
-            __napi_schedule(&channel->napi_tx);
-            writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);//mask IRQF_TX_SEND;
-        }
+        writel_relaxed(0, &channel->reg_base_channel->tx_irq_mask);//mask IRQF_TX_SEND;
+        napi_schedule(&channel->napi_tx);
     }
     /*if(flag & IRQF_TX_EMPTY) { 
         flag &= ~IRQF_TX_EMPTY;//clear
@@ -37,25 +34,20 @@ irqreturn_t irq_handler_rx(int irq, void *data)
     uint32_t flag = readl_relaxed(&channel->reg_base_channel->rx_irq_flag);
     //printk("MYNET:rx_hw_irq,flag:0x%08x\n",flag);
     if(likely(flag & IRQF_RX_RECV)) {
-        //uini32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
+        //uint32_t mask = readl_relaxed(&channel->reg_base_channel->tx_irq_mask);
         //mask &= ~IRQF_RX_RECV;
-        if (likely(napi_schedule_prep(&channel->napi_rx))) {
-            //printk("MYNET:rx_hw_irq,prep\n");
-            __napi_schedule(&channel->napi_rx);
-            writel_relaxed(0, &channel->reg_base_channel->rx_irq_mask);//mask IRQF_RX_RECV;
-        }
+        writel_relaxed(0, &channel->reg_base_channel->rx_irq_mask);//mask IRQF_RX_RECV;
+        napi_schedule(&channel->napi_rx);
     }
     /*if(flag & IRQF_RX_FULL) {
-
  
     }
     if(flag & IRQF_RX_ERR) {
 
-
     }*/
     //printk("MYNET:rxirq:w:0x%04x\n",flag);
     BUG_ON(flag & IRQF_RX_ERR);
-
+    
     //clear all irq flag
     writel(0, &channel->reg_base_channel->rx_irq_flag);
     return IRQ_HANDLED;

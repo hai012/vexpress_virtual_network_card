@@ -234,7 +234,7 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     if(done==budget) {
         return budget;
     }
-    if(napi_complete_done(napi,done)) {
+    if(likely(napi_complete_done(napi,done))) {
         writel(IRQF_TX_SEND, &channel->reg_base_channel->tx_irq_mask);//unmask IRQF_TX_SEND
     }
 
@@ -338,7 +338,7 @@ CHECKSUM_PARTIAL：L4软件计算了伪报头的校验和，并且将值保存�
         return budget;
     }
 
-    if(napi_complete_done(napi,done)) {
+    if(likely(napi_complete_done(napi,done))) {
         writel(IRQF_RX_RECV,  &channel->reg_base_channel->rx_irq_mask);//umask IRQF_RX_RECV
     }
 
