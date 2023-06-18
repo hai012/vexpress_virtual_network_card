@@ -322,6 +322,6 @@
 					 <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>,
 					 <GIC_SPI 22 IRQ_TYPE_LEVEL_HIGH>,
 					 <GIC_SPI 23 IRQ_TYPE_LEVEL_HIGH>;
-		interrupt-affinity = <&A9_0>, <&A9_0>, <&A9_1>, <&A9_1>, <&A9_2>, <&A9_2>, <&A9_3>, <&A9_3>;
+		//interrupt-affinity = <&A9_0>, <&A9_0>, <&A9_1>, <&A9_1>, <&A9_2>, <&A9_2>, <&A9_3>, <&A9_3>;
     };
 };

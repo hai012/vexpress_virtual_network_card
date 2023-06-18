@@ -147,7 +147,6 @@ struct channel_data {
     int tx_irqs;
     int rx_irqs;
 
-    int num;
 
     struct napi_struct napi_tx;//preempt
     struct napi_struct napi_rx;

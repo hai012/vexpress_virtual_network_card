@@ -17,6 +17,14 @@ DTB=out/kernel/arch/arm/boot/dts/vexpress-v2p-ca9.dtb
 #CORES=2
 #DTB=out/kernel/arch/arm/boot/dts/vexpress-v2p-ca15-tc1.dtb
 
+SNAT=`iptables -t nat  -L POSTROUTING|grep "MASQUERADE  all  --  192.168.0.0/24       anywhere"`
+if [ -z "$SNAT" ]
+then
+	iptables -t nat -I POSTROUTING -s 192.168.0.0/24 -o ens33 -j MASQUERADE
+fi
+iptables -t filter -P FORWARD ACCEPT
+
+
 ulimit -c unlimited
 #$QEMU -M $MACHINE  -accel tcg,thread=multi -cpu cortex-a9  -smp $CORES  -m 1G -kernel $KERNEL -dtb $DTB -nographic -serial mon:stdio   -append 'console=ttyAMA0 rootfstype=ext4 root=/dev/mmcblk0  rw rootwait init=/sbin/init  loglevel=8'  -drive  file=${SD_IMAGE},format=raw,id=mysdcard -device sd-card,drive=mysdcard  -nic user
 $QEMU -M $MACHINE  -accel tcg,thread=multi -cpu cortex-a9  -smp $CORES  -m 1G -kernel $KERNEL -dtb $DTB -nographic -serial mon:stdio   -append 'console=ttyAMA0 rootfstype=ext4 root=/dev/mmcblk0  rw rootwait init=/sbin/init  loglevel=8'  -sd $SD_IMAGE  -nic user

@@ -160,7 +160,7 @@ netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
     
 
     if(ret) {
-        //pr_err("smp_processor_id=%d  qdisc_id=%d  insert_skb_to_tx_ring failed\n",processor_id,channelIndex);
+        pr_err("smp_processor_id=%d  qdisc_id=%d  insert_skb_to_tx_ring failed\n",smp_processor_id(),channelIndex);
         netif_tx_stop_queue(netdev_get_tx_queue(netdev, channelIndex));
         //WRITE_ONCE(xmit_flag, 0xf);
         return NETDEV_TX_BUSY;
@@ -197,7 +197,7 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
     int done=0,bytes = 0;
     //int format_error = 1;
     u16 channelIndex;
-    //pr_err("MYNET:mynet_poll_tx:channel=%d\n",channel->num);
+    //pr_err("MYNET:mynet_poll_tx:channel=%d\n",channel->queue_index);
     //spin_lock(&channel->spinlock_tx_ring_full);
     while(budget > done) {
         if(channel->tx_ring_full==READ_ONCE(channel->tx_ring_empty)) {
@@ -252,11 +252,11 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
     
     while(budget>done)
     {
-        //pr_err("MYNET:%d:RX:mynet_poll_rx done=%d budget=%d\n",channel->num,done,budget);
+        //pr_err("MYNET:%d:RX:mynet_poll_rx done=%d budget=%d\n",channel->queue_index,done,budget);
         //if(is_node_transfer(channel->tx_ring_full)) {
             if(is_node_belong_to_hw(channel->rx_ring)) {
                 //now, there is no linear_buffer to receive
-                //pr_err("MYNET:%d:RX:now, there is no linear_buffer to receive\n",channel->num);
+                //pr_err("MYNET:%d:RX:now, there is no linear_buffer to receive\n",channel->queue_index);
                 break;
             }
 
@@ -273,7 +273,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             //char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
             linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL|GFP_DMA, 0);
             if(unlikely(!linear_buffer_replace)) {
-                pr_err("MYNET:%d:RX:napi_alloc_frag failed\n",channel->num);
+                pr_err("MYNET:%d:RX:napi_alloc_frag failed\n",channel->queue_index);
                 break;
             }
             dma_addr = dma_map_single(&pdev->dev,
@@ -281,7 +281,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
                                       MAX_RECV_LEN,
                                       DMA_TO_DEVICE);
             if (unlikely(dma_mapping_error(&pdev->dev, dma_addr))) {
-                pr_err("MYNET:%d:RX:dma_map_single  failed\n",channel->num);
+                pr_err("MYNET:%d:RX:dma_map_single  failed\n",channel->queue_index);
                 skb_free_frag(linear_buffer_replace);  //page_frag_free
                 break;
             }
@@ -296,7 +296,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             //recv
             skb = napi_build_skb(linear_buffer_recv, MAX_RX_SKB_LINEAR_BUFF_LEN);
             if (unlikely(!skb)) {
-                pr_err("MYNET:%d:RX:build_skb fail\n",channel->num);
+                pr_err("MYNET:%d:RX:build_skb fail\n",channel->queue_index);
                 skb_free_frag(linear_buffer_recv);
                 //netdev->stats.rx_dropped++;
                 break;
@@ -385,10 +385,18 @@ static int mynet_probe(struct platform_device *dev)
             pr_err("%s: fail to get tx irq, channel=%d,irq=%d\n",__func__,i,0);
             return -ENODEV;
         }
+        if (irq_set_affinity(irq, cpumask_of(i))) {
+            pr_err("Failed to set IRQ affinity channel/cpu =%d\n",i);
+            return -ENODEV;
+        }
         channel_info[i].tx_irqs = irq;
         irq = platform_get_irq(pdev, i*MAX_IRQ_NUM_PER_CHANNEL+1);
         if(irq < 0) {
             pr_err("%s: fail to get rx irq, channel=%d,irq=%d\n",__func__,i,1);
+            return -ENODEV;
+        }
+        if (irq_set_affinity(irq, cpumask_of(i))) {
+            pr_err("Failed to set IRQ affinity channel/cpu =%d\n",i);
             return -ENODEV;
         }
         channel_info[i].rx_irqs = irq;
@@ -402,7 +410,6 @@ static int mynet_probe(struct platform_device *dev)
         channel_info[i].tx_bytes = 0;
         channel_info[i].rx_packets = 0;
         channel_info[i].rx_bytes = 0;
-        channel_info[i].num=i;
     }
 
     //param check
@@ -444,7 +451,7 @@ NETIF_F_NO_CSUM	4	网络设备的传输非常可靠，无需L4执行任何校验
 NETIF_F_HW_CSUM	8	网络设备可以对任何L4协议的数据包进行校验，基本很少有硬件能够实现
 NETIF_F_IPV6_CSUM	16	网络设备可以对基于IPv6的TCP和UDP数据包进行校验，其它协议报文不支持*/
 	//netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO| NETIF_F_SG;//hardware doesn't support checksum ,calc it by software when GSO segment
-    netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO;
+    netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO|NETIF_F_SG;
     if(register_netdev(netdev)) {
         pr_err("%s: fail to register netdev\n",__func__);
         free_netdev(netdev);

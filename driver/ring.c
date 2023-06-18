@@ -202,9 +202,8 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
 * to go beyond nr_frags+1.
 * Note: We don't support chained scatterlists*/
     struct scatterlist *scl, *crt_scl;
-    unsigned int num_dma_bufs,i;
+    unsigned int num_dma_bufs,i,empty_count;
     int num_sg;
-    unsigned int nodes_need;
     unsigned int frag_count = skb_shinfo(skb)->nr_frags + 1;
     struct ring_node_info * fill;
     struct ring_node_info *node_table[MAX_SKB_FRAGS];
@@ -217,29 +216,26 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     num_sg = skb_to_sgvec(skb, scl, 0, skb->len);
     if (unlikely(num_sg < 0)) {
     	err = -ENOMEM;
+
     	goto dma_map_sg_failed;
     }
     //num_dma_bufs <= num_sg
     num_dma_bufs = dma_map_sg(&pdev->dev, scl, num_sg, DMA_TO_DEVICE);
-    if (unlikely(num_dma_bufs==0)) {
+    if (unlikely(num_dma_bufs <= 0)) {
     	err = -ENOMEM;
     	goto dma_map_sg_failed;
     }
 
-
-    //check if it has enough node to fill
     //spin_lock(&channel->spinlock_tx_ring_empty);
-    nodes_need = num_dma_bufs;
-    for(struct ring_node_info *node=channel->tx_ring_empty;
-        node->next != READ_ONCE(channel->tx_ring_full);
-        node=node->next) {
-            if(nodes_need--)
-                break;
-    }
-    if(nodes_need) {
-        //pr_err("it dose not have enough node to fill head and frags,wait for send previous node\n");
-        err = -EBUSY;
-        goto dma_unmap;
+    //printk("check if it has enough node to fill,num_dma_bufs=%d\n",num_dma_bufs);
+    fill = channel->tx_ring_empty;
+    for(empty_count=0; empty_count < num_dma_bufs; ++empty_count) {
+        if(fill->next == READ_ONCE(channel->tx_ring_full)) {
+            pr_err("it dose not have enough node to fill head and frags,need_bufs=%d empty_count%d\n",num_dma_bufs,empty_count);
+            err = -EBUSY;
+            goto dma_unmap;
+        }
+        fill = fill->next;
     }
 
     //start fill content
@@ -251,8 +247,7 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
         fill = fill -> next;
     }
 
-
-    //start fill flag
+    //printk("start fill flag,num_dma_bufs=%d\n",num_dma_bufs);
     node_table[num_dma_bufs-1]->skb = skb;
     node_table[num_dma_bufs-1]->scl = scl;
     node_table[num_dma_bufs-1]->num_sg = num_sg;

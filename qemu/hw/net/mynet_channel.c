@@ -134,10 +134,10 @@ static int tap_write(int fd,struct ring_node_t *node_table,uint32_t frag_count)
             printf("QEMU:TX:parse tap_write iov_base failed, guest phy addr=0x%08x,len=0x%08x\n",node_table[index].base,node_table[index].len);
             return -1;
         }
-        if(frag_len != node_table[index].len) {
+        /*if(frag_len != node_table[index].len) {
             printf("QEMU:TX:cpu_physical_memory_map modify frag_len\n");
             return -1;
-        }
+        }*/
 
         /*printf("QEMU:TX:FRAG:");
         for(int i=0;i<node_table[index].len;++i) {
@@ -217,7 +217,7 @@ static void *pthread_fn_tx(void *ptr)
                 msc->reg.tx_ring_base = node_table[frag_index].next;//handle next frag which belong a new skb
                 break;//check tx_ctl_status before send the next skb
             }
-            msc->reg.tx_ring_base = node_table[frag_index].next;//handle next frag which belong a same skb
+            msc->reg.tx_ring_base = node_table[frag_index].next;//handle next frag which belong the same skb
         }
         if(frag_index == MAX_SKB_FRAGS) {
             printf("QEMU:%d:TX:formant err, frags is too many in a skb\n",msc->num);
@@ -238,10 +238,10 @@ static ssize_t tap_read(int fd,struct ring_node_t *ring_node_ptr)
         printf("QEMU:RX:parse tap_write iov_base failed, guest phy addr=0x%08x,len=0x%08x\n",ring_node_ptr->base,ring_node_ptr->len);
         return -1;
     }
-    if(frag_len != ring_node_ptr->len) {
+    /*if(frag_len != ring_node_ptr->len) {
         printf("QEMU:RX:cpu_physical_memory_map modify frag_len\n");
         return -1;
-    }
+    }*/
     buf_len = ring_node_ptr->len;
 
     ret = read(fd, buf, buf_len);
@@ -353,9 +353,9 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
             TX_FLAG_MODIFY(CTL_FLAG_START);
             pthread_cond_signal(&msc->cond_tx);
         }
-        if(value==0 && msc->reg.tx_ctl_status==1) {
+        /*if(value==0 && msc->reg.tx_ctl_status==1) {
             TX_FLAG_MODIFY(CTL_FLAG_STOP);
-        }
+        }*/
         break;
     case 0x08://irq flag reg
         msc->reg.tx_irq_flag = (uint32_t) value & ALL_IRQF_TX;
@@ -385,9 +385,9 @@ static void mynet_channel_writefn(void *opaque, hwaddr addr,
             RX_FLAG_MODIFY(CTL_FLAG_START);
             pthread_cond_signal(&msc->cond_rx);
         }
-        if(value==0 && msc->reg.rx_ctl_status==1) {
+        /*if(value==0 && msc->reg.rx_ctl_status==1) {
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
-        }
+        }*/
         break;
     case 0x18:
         msc->reg.rx_irq_flag = (uint32_t) value & ALL_IRQF_RX;

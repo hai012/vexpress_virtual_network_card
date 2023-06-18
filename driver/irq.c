@@ -22,8 +22,10 @@ irqreturn_t irq_handler_tx(int irq, void *data)
         BUG();
         //flag &= ~IRQF_TX_ERR;//clear
     }*/
-    BUG_ON(flag & IRQF_TX_ERR);
-    //printk("MYNET:irq_handler_tx:clear flag\n");
+    //if(unlikely(flag & IRQF_TX_ERR)) {
+        //printk("MYNET:irq_handler_tx:clear flag\n");
+    //};
+
     //clear all tx irq flag
     writel(0, &channel->reg_base_channel->tx_irq_flag);
     return IRQ_HANDLED;
@@ -46,7 +48,9 @@ irqreturn_t irq_handler_rx(int irq, void *data)
 
     }*/
     //printk("MYNET:rxirq:w:0x%04x\n",flag);
-    BUG_ON(flag & IRQF_RX_ERR);
+    //if(unlikely(flag & IRQF_RX_ERR)) {
+
+    //}
     
     //clear all irq flag
     writel(0, &channel->reg_base_channel->rx_irq_flag);
