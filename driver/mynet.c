@@ -160,7 +160,7 @@ netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
     
 
     if(ret) {
-        pr_err("smp_processor_id=%d  qdisc_id=%d  insert_skb_to_tx_ring failed\n",smp_processor_id(),channelIndex);
+        //pr_err("smp_processor_id=%d  qdisc_id=%d  insert_skb_to_tx_ring failed\n",smp_processor_id(),channelIndex);
         netif_tx_stop_queue(netdev_get_tx_queue(netdev, channelIndex));
         //WRITE_ONCE(xmit_flag, 0xf);
         return NETDEV_TX_BUSY;

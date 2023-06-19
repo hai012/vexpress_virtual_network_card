@@ -281,7 +281,7 @@ wait_ctl_run:
         }
         //printf("QEMU:%d:RX:BASE:rx_ring_node info:flag=0x%08x base=0x%08x len=0x%08x next=0x%08x\n",msc->num,ring_node.flag,ring_node.base,ring_node.len,ring_node.next);
         if(!(ring_node.flag & NODE_F_BELONG)) {
-            //printf("QEMU:%d:RX:flag bit0== 0, belong to driver, rx ring buffer full\n",msc->num);
+            //sprintf("QEMU:%d:RX:flag bit0== 0, belong to driver, rx ring buffer full\n",msc->num);
             RX_FLAG_MODIFY(CTL_FLAG_STOP);
             RX_IF_NEED_IRQ(IRQF_RX_FULL);
             continue;

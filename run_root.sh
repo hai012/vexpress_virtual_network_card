@@ -21,6 +21,7 @@ SNAT=`iptables -t nat  -L POSTROUTING|grep "MASQUERADE  all  --  192.168.0.0/24 
 if [ -z "$SNAT" ]
 then
 	iptables -t nat -I POSTROUTING -s 192.168.0.0/24 -o ens33 -j MASQUERADE
+	iptables -t nat -I POSTROUTING -s 192.168.0.0/24 -o ens3 -j MASQUERADE
 fi
 iptables -t filter -P FORWARD ACCEPT
 
