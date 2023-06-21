@@ -55,10 +55,15 @@ struct platform_device *pdev;
 //channel data
 struct channel_data channel_info[MAX_CHANNEL_NUM];
 
+struct u64_stats_sync	stats_syncp_tx;
+struct u64_stats_sync	stats_syncp_rx;
+atomic64_t tx_packets;
+atomic64_t tx_bytes;
+atomic64_t rx_packets;
+atomic64_t rx_bytes;
 
 
-
-int	mynet_open(struct net_device *netdev)
+int	mynet_open(struct net_device *dev)
 {
     //pr_err("mynet_open:hw_init\n");
     for(int i=0; i < MAX_CHANNEL_NUM; ++i) {
@@ -117,7 +122,7 @@ int	mynet_open(struct net_device *netdev)
     //pr_err("mynet_open:return\n");
     return 0;
 }
-int	mynet_stop(struct net_device *netdev)
+int	mynet_stop(struct net_device *dev)
 {
     netif_tx_stop_all_queues(netdev);
     for(int i=0; i < real_tx_channel_count; ++i) {
@@ -142,7 +147,7 @@ int	mynet_stop(struct net_device *netdev)
     return 0;
 }
 uint32_t xmit_flag=0xf;
-netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
+netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *dev)
 {
     int ret;
     //u32 processor_id = smp_processor_id();
@@ -179,6 +184,15 @@ netdev_tx_t	mynet_xmit(struct sk_buff *skb,struct net_device *netdev)
     //WRITE_ONCE(xmit_flag, 0xf);
     return NETDEV_TX_OK;
 }
+
+void mynet_stats64(struct net_device *dev,struct rtnl_link_stats64 *storage)
+{
+    storage->tx_packets = atomic64_read(&tx_packets);
+    storage->tx_bytes = atomic64_read(&tx_bytes);
+    storage->rx_packets = atomic64_read(&rx_packets);
+    storage->rx_bytes = atomic64_read(&rx_bytes);
+}
+
 static const struct net_device_ops mynet_netdev_ops = {
 	.ndo_open		= mynet_open,
 	.ndo_stop		= mynet_stop,
@@ -186,7 +200,7 @@ static const struct net_device_ops mynet_netdev_ops = {
 	.ndo_start_xmit		= mynet_xmit,
     .ndo_set_mac_address = eth_mac_addr,
 	//.ndo_do_ioctl		= mynet_ioctl,
-	//.ndo_get_stats		= mynet_stats,
+	.ndo_get_stats64		= mynet_stats64,
 	//.ndo_change_mtu		= mynet_change_mtu,
 	//.ndo_tx_timeout    = mynet_tx_timeout,
 };
@@ -194,7 +208,7 @@ static const struct net_device_ops mynet_netdev_ops = {
 static int mynet_poll_tx(struct napi_struct *napi, int budget)
 {
     struct channel_data * channel = container_of(napi, struct channel_data, napi_tx);
-    int done=0,bytes = 0;
+    long long done=0,bytes = 0;
     //int format_error = 1;
     u16 channelIndex;
     //pr_err("MYNET:mynet_poll_tx:channel=%d\n",channel->queue_index);
@@ -229,8 +243,10 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
         //}
         WRITE_ONCE(channel->tx_ring_full, channel->tx_ring_full->next);
     }
-    channel->tx_packets += done;
-    channel->tx_bytes += bytes;
+
+    atomic64_add(done, &tx_packets);
+    atomic64_add(bytes,&tx_bytes);
+
     if(done==budget) {
         return budget;
     }
@@ -331,8 +347,9 @@ CHECKSUM_PARTIAL：L4软件计算了伪报头的校验和，并且将值保存�
         //}
     }
 
-    channel->rx_packets += done;
-    channel->rx_bytes += bytes;
+    atomic64_add(done, &rx_packets);
+    atomic64_add(bytes,&rx_bytes);
+
 
     if(done==budget) {
         return budget;
@@ -402,15 +419,19 @@ static int mynet_probe(struct platform_device *dev)
         channel_info[i].rx_irqs = irq;
     }
 
-    for(int i=0; i<MAX_CHANNEL_NUM;++i) {
-        /*spin_lock_init(&channel_info[i].spinlock_tx_ring_empty);
+    /*for(int i=0; i<MAX_CHANNEL_NUM;++i) {
+        spin_lock_init(&channel_info[i].spinlock_tx_ring_empty);
         spin_lock_init(&channel_info[i].spinlock_tx_ring_full);
-        channel_info[i].queue_index = i;*/
+        channel_info[i].queue_index = i;
         channel_info[i].tx_packets = 0;
         channel_info[i].tx_bytes = 0;
         channel_info[i].rx_packets = 0;
         channel_info[i].rx_bytes = 0;
-    }
+    }*/
+    atomic64_set(&rx_packets,0);
+    atomic64_set(&rx_bytes,0);
+    atomic64_set(&tx_packets,0);
+    atomic64_set(&tx_bytes,0);
 
     //param check
     real_tx_channel_count = param_real_tx_channel_count;

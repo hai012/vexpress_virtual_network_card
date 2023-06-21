@@ -161,7 +161,6 @@ int rx_ring_dma_init(void)
                 goto err_clean_previous;
             }
 
-            
             init_start->linear_buffer = liner_buffer;
             writel_relaxed(dma_addr,                        &init_start->virtual_addr->base);
             writel_relaxed(MAX_RECV_LEN,                    &init_start->virtual_addr->len);

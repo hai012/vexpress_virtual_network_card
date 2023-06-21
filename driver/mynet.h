@@ -162,10 +162,7 @@ struct channel_data {
     //int is_rx_ring_full;
     //int is_tx_ring_empty;
     struct page_frag_cache page_cache;
-    unsigned long long tx_packets;
-    unsigned long long tx_bytes;
-    unsigned long long rx_packets;
-    unsigned long long rx_bytes;
+
 };
 
 //config data
@@ -179,6 +176,12 @@ extern int rx_ring_node_count;
 extern struct RegCommon * reg_base_common;
 extern struct net_device * netdev;
 extern struct platform_device *pdev;
+extern struct u64_stats_sync	stats_syncp_tx;
+extern struct u64_stats_sync	stats_syncp_rx;
+extern atomic64_t tx_packets;
+extern atomic64_t tx_bytes;
+extern atomic64_t rx_packets;
+extern atomic64_t rx_bytes;
 //channel data
 extern struct channel_data channel_info[MAX_CHANNEL_NUM];
 
