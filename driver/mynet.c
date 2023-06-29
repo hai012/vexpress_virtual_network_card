@@ -287,7 +287,7 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
 
             //replace
             //char * linear_buffer_replace = napi_alloc_frag(MAX_RX_SKB_LINEAR_BUFF_LEN);
-            linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_KERNEL|GFP_DMA, 0);
+            linear_buffer_replace = page_frag_alloc_align(&channel->page_cache, MAX_RX_SKB_LINEAR_BUFF_LEN, GFP_ATOMIC|GFP_DMA, 0);
             if(unlikely(!linear_buffer_replace)) {
                 pr_err("MYNET:%d:RX:napi_alloc_frag failed\n",channel->queue_index);
                 break;
