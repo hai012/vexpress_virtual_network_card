@@ -57,7 +57,7 @@ int ring_init(void)
         return -ENOMEM;
     }
 
-   
+    //dma_pool_zalloc底层是dma_alloc_coherent连续映射
     for(int i=0; i<real_tx_channel_count; ++i) {
         ptr = ring_node_info_table + i * tx_ring_node_count;
         for(int j=0; j< tx_ring_node_count; ++j) {
@@ -212,13 +212,13 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
     if (unlikely(!scl))
       	return -ENOMEM;
     sg_init_table(scl, frag_count);
-    num_sg = skb_to_sgvec(skb, scl, 0, skb->len);
+    num_sg = skb_to_sgvec(skb, scl, 0, skb->len);//将SKB内要发送数据的物理地址和长度放入scl，数据本身不拷贝
     if (unlikely(num_sg < 0)) {
     	err = -ENOMEM;
-
     	goto dma_map_sg_failed;
     }
-    //num_dma_bufs <= num_sg
+
+    //num_dma_bufs <= num_sg   映射要发送数据所在区域，得到DMA地址，此后该区域只允许DMA硬件去访问
     num_dma_bufs = dma_map_sg(&pdev->dev, scl, num_sg, DMA_TO_DEVICE);
     if (unlikely(num_dma_bufs <= 0)) {
     	err = -ENOMEM;
@@ -237,24 +237,27 @@ int insert_skb_to_tx_ring(struct channel_data * channel,struct sk_buff *skb)
         fill = fill->next;
     }
 
-    //start fill content
+    //将每个scatterlist的DMA地址和长度放入DMA描述符
     fill = channel->tx_ring_empty;
     for_each_sg(scl, crt_scl, num_dma_bufs, i) {
-        node_table[i] = fill;
+        node_table[i] = fill;//记录本次使用了那些DMA节点
         writel_relaxed(sg_dma_address(crt_scl), &fill->virtual_addr->base);
         writel_relaxed(sg_dma_len(crt_scl), &fill->virtual_addr->len);
         fill = fill -> next;
     }
 
-    //printk("start fill flag,num_dma_bufs=%d\n",num_dma_bufs);
+    //在装记录最后一个scatterlist的ring_node_info上记录相关信息
     node_table[num_dma_bufs-1]->skb = skb;
     node_table[num_dma_bufs-1]->scl = scl;
     node_table[num_dma_bufs-1]->num_sg = num_sg;
+
+    //让DMA描述符属于DMA，启动传输,从后往前,这样DMA硬件检测到第一个属于DMA的描述符时后面的也填充好了。
     writel(NODE_F_TRANSFER|NODE_F_BELONG, &node_table[num_dma_bufs-1]->virtual_addr->flag);
     for (int i=num_dma_bufs-2; i>=0; --i) {
         writel(NODE_F_BELONG, &node_table[i]->virtual_addr->flag);
     }
 
+    //让tx_ring_empty指向后续的属于驱动的描述符，也就是空闲DMA描述符
     WRITE_ONCE(channel->tx_ring_empty ,fill);
     //spin_unlock(&channel->spinlock_tx_ring_empty);
 

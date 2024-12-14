@@ -54,10 +54,10 @@ TSO/UFO/GRO is related to NETIF_F_FRAGLIST and NETIF_F_SG
 #include <linux/platform_device.h> 
 #include <linux/gfp.h>
 //NET_SKB_PAD
-//NET_IP_ALIGN  0 or 2
-//ETH_HLEN 14,dest mac /src mac type
-//ETH_DATA_LEN, 1500
-//ETH_FCS_LEN, 4      tap dev doesn't have FCS
+//NET_IP_ALIGN   0 or 2
+//ETH_HLEN 14    dest_mac 、src_mac 、type
+//ETH_DATA_LEN   1500
+//ETH_FCS_LEN 4  tap dev doesn't have FCS
 #define MAX_RX_SKB_LINEAR_BUFF_LEN \
 (SKB_DATA_ALIGN((NET_SKB_PAD  +  NET_IP_ALIGN + ETH_HLEN + ETH_DATA_LEN))\
 + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
@@ -124,7 +124,7 @@ struct ring_node_t {
     uint32_t len;
     uint32_t next;
 };
-
+//////////////////////////////////////////////////////////////////////////////////////
 
 struct ring_node_info {
     struct ring_node_t *virtual_addr;

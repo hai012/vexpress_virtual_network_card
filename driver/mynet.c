@@ -193,16 +193,29 @@ void mynet_stats64(struct net_device *dev,struct rtnl_link_stats64 *storage)
     storage->rx_bytes = atomic64_read(&rx_bytes);
 }
 
+static int mynet_mac_addr(struct net_device *dev, void *p)
+{
+    //将单播MAC地址写入网卡,并设置网卡RX FIFO0 MAC地址过滤接收该单播MAC地址
+    return eth_mac_addr(dev,p);
+}
+static void mynet_set_rx_mode(struct net_device *dev) 
+{ 
+    //用于根据dev中的状态设置网卡的接收模式，包括多播地址、广播地址以及接收所有数据包等功能
+    //ifconfig设置混杂模式/多播地址时会调用
+    //ndo_open返回0后会调用
+}
 static const struct net_device_ops mynet_netdev_ops = {
 	.ndo_open		= mynet_open,
 	.ndo_stop		= mynet_stop,
 	//.ndo_set_config		= mynet_config,
 	.ndo_start_xmit		= mynet_xmit,
-    .ndo_set_mac_address = eth_mac_addr,
+    .ndo_set_mac_address = mynet_mac_addr,
+     .ndo_set_rx_mode = mynet_set_rx_mode,
 	//.ndo_do_ioctl		= mynet_ioctl,
 	.ndo_get_stats64		= mynet_stats64,
 	//.ndo_change_mtu		= mynet_change_mtu,
 	//.ndo_tx_timeout    = mynet_tx_timeout,
+    //.ndo_validate_addr = eth_validate_addr,
 };
 
 static int mynet_poll_tx(struct napi_struct *napi, int budget)
@@ -256,6 +269,9 @@ static int mynet_poll_tx(struct napi_struct *napi, int budget)
 
     return done;
 }
+
+
+
 static int mynet_poll_rx(struct napi_struct *napi, int budget)
 {
     struct channel_data * channel = container_of(napi, struct channel_data, napi_rx);
@@ -319,7 +335,6 @@ static int mynet_poll_rx(struct napi_struct *napi, int budget)
             }
             skb_reserve(skb, ETH_HEADER_OFFSET_IN_LINEAR_BUFF);
             skb_record_rx_queue(skb,channel->queue_index);
-            skb->dev = netdev;
             skb_put(skb,recv_bytes);
             //skb_mark_for_recycle(skb); see page_pool
             
@@ -332,7 +347,7 @@ CHECKSUM_COMPLETE：硬件已经计算了L4报头和其payload部分的校验和
 CHECKSUM_NONE：L4软件已经对数据包进行了完整的校验，或者该数据包不需要校验。总之这种情况下网络设备硬件无需做任何校验和计算；
 CHECKSUM_PARTIAL：L4软件计算了伪报头的校验和，并且将值保存在了数据报的L4层首部的check字段中，网络设备硬件需要计算其余部分的校验和（报文首部+数据部分）。硬件需要计算的报文范围是从skb->csum_start到报文最后一个字节，计算结果需要填写到（skb->csum_start + skb->csum_offset）处。
 */
-            skb->ip_summed = CHECKSUM_UNNECESSARY;/* don't check it */
+            skb->ip_summed = CHECKSUM_UNNECESSARY;
             skb->protocol = eth_type_trans(skb, netdev);
 
             bytes += skb->len;
@@ -352,13 +367,22 @@ CHECKSUM_PARTIAL：L4软件计算了伪报头的校验和，并且将值保存�
 
 
     if(done==budget) {
+        //说明预算用完了但还有数据要处理，无需开启接收中断，
+        //直接让内核将当前napi_struct加入softirq/net_rx_action待处理list
+        //下次softirq执行时再次回调poll函数
         return budget;
     }
 
+    //到这里说明预算没用完硬件中没数据了，这波poll结束，待下次触发中断napi_schedule后再回调poll
+
     if(likely(napi_complete_done(napi,done))) {
+        //如果在某个napi_struct的poll期间的时候硬件中断上半部再调napi_schedule(napi_struct)，
+        //就会产生NAPIF_STATE_MISSED标记，导致napi_complete_done返回false(意味着中断上半部没MASK接收中断)
+        //mynet在硬件中断上半部已经关掉IRQF_RX_RECV，因此其实不会出现这种返回false的情况。
+        //对于mask接收中断的情况，需要再次unmask以便后续触发中断再次napi_schedule
         writel(IRQF_RX_RECV,  &channel->reg_base_channel->rx_irq_mask);//umask IRQF_RX_RECV
     }
-
+    
     return done;
 }
 
@@ -447,10 +471,10 @@ static int mynet_probe(struct platform_device *dev)
         return -1;
     }
 
-    //netdev init
+    //netdev init 
     netdev = alloc_netdev_mqs( 0,
                                "mynet%d",
-                               NET_NAME_ENUM,
+                               NET_NAME_ENUM,//网卡名由内核枚举
                                ether_setup,
                                real_tx_channel_count, 
                                real_rx_channel_count);
@@ -472,6 +496,7 @@ NETIF_F_NO_CSUM	4	网络设备的传输非常可靠，无需L4执行任何校验
 NETIF_F_HW_CSUM	8	网络设备可以对任何L4协议的数据包进行校验，基本很少有硬件能够实现
 NETIF_F_IPV6_CSUM	16	网络设备可以对基于IPv6的TCP和UDP数据包进行校验，其它协议报文不支持*/
 	//netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO| NETIF_F_SG;//hardware doesn't support checksum ,calc it by software when GSO segment
+    netdev->priv_flags |= IFF_UNICAST_FLT;
     netdev->features       |=  NETIF_F_GRO |NETIF_F_GSO|NETIF_F_SG;
     if(register_netdev(netdev)) {
         pr_err("%s: fail to register netdev\n",__func__);

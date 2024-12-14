@@ -27,5 +27,9 @@ iptables -t filter -P FORWARD ACCEPT
 
 
 ulimit -c unlimited
+
+
+#ip tuntap add tap0 mode tap
+
 #$QEMU -M $MACHINE  -accel tcg,thread=multi -cpu cortex-a9  -smp $CORES  -m 1G -kernel $KERNEL -dtb $DTB -nographic -serial mon:stdio   -append 'console=ttyAMA0 rootfstype=ext4 root=/dev/mmcblk0  rw rootwait init=/sbin/init  loglevel=8'  -drive  file=${SD_IMAGE},format=raw,id=mysdcard -device sd-card,drive=mysdcard  -nic user
 $QEMU -M $MACHINE  -accel tcg,thread=multi -cpu cortex-a9  -smp $CORES  -m 1G -kernel $KERNEL -dtb $DTB -nographic -serial mon:stdio   -append 'console=ttyAMA0 rootfstype=ext4 root=/dev/mmcblk0  rw rootwait init=/sbin/init  loglevel=8'  -sd $SD_IMAGE  -nic user
